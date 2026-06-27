@@ -1,0 +1,53 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ── Turbo ────────────────────────────────────────────────────────────────────
+.turbo/
+
+# ── Tauri (Rust build artifacts) ─────────────────────────────────────────────
+**/src-tauri/target/
+
+# ── Cloudflare / Wrangler ────────────────────────────────────────────────────
+.wrangler/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.dev.vars
+*.secret
+
+# ── Expo / Mobile ─────────────────────────────────────────────────────────────
+.expo/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editor ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo

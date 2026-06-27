@@ -1,0 +1,26 @@
+{
+  "name": "@zakhira/backend",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply zakhira-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply zakhira-db --remote",
+    "db:studio": "drizzle-kit studio",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@zakhira/core": "workspace:*",
+    "drizzle-orm": "^0.30.0",
+    "hono": "^4.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240502.0",
+    "drizzle-kit": "^0.21.0",
+    "typescript": "^5.4.0",
+    "wrangler": "^4.105.0"
+  }
+}

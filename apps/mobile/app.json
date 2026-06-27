@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Zakhira",
+    "slug": "zakhira",
+    "version": "1.0.0",
+    "scheme": "zakhira",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#101115"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#101115"
+      },
+      "package": "site.niyaz.zakhira"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#d9a441"
+        }
+      ]
+    ]
+  }
+}
