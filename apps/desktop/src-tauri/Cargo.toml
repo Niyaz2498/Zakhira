@@ -1,0 +1,19 @@
+[package]
+name = "zakhira"
+version = "0.0.1"
+description = "Zakhira — personal quest log"
+authors = ["Niyaz"]
+edition = "2021"
+
+[lib]
+name = "zakhira_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
