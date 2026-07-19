@@ -36,15 +36,14 @@ app.get("/", async (c) => {
   let filteredOps: typeof opRows = opRows;
   let filteredTasks: typeof taskRows = taskRows;
   let filteredReminders: typeof reminderRows = reminderRows;
-  if (auth.scope === "scoped" && auth.allowedOperationIds) {
+  if (auth.allowedOperationIds) {
     filteredOps = opRows.filter((r) => auth.allowedOperationIds!.includes(r.id));
     filteredTasks = taskRows.filter((t) =>
       auth.allowedOperationIds!.includes(t.operationId)
     );
-    const allowedTaskIds = new Set(filteredTasks.map((t) => t.id));
-    filteredReminders = reminderRows.filter(
-      (r) => r.taskId === null || allowedTaskIds.has(r.taskId)
-    );
+  }
+  if (auth.userId) {
+    filteredReminders = reminderRows.filter((r) => r.userId === auth.userId);
   }
 
   // Load all deps for efficiency

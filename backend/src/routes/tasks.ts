@@ -75,7 +75,7 @@ app.get("/", async (c) => {
     });
   } else {
     rows = await db.query.tasks.findMany();
-    if (auth.scope === "scoped" && auth.allowedOperationIds) {
+    if (auth.allowedOperationIds) {
       rows = rows.filter((r) => auth.allowedOperationIds!.includes(r.operationId));
     }
   }
@@ -177,10 +177,6 @@ app.patch("/:id", async (c) => {
   if (!existing) return c.json({ ok: false, error: "Not found" }, 404);
   assertOperationAccess(auth, existing.operationId);
 
-  if (existing.state === "completed" || existing.state === "scrapped") {
-    return c.json({ ok: false, error: "Cannot edit a completed or scrapped task" }, 400);
-  }
-
   const body = await c.req.json<{
     title?: string;
     operationId?: string;
@@ -192,6 +188,16 @@ app.patch("/:id", async (c) => {
     notes?: string | null;
     prerequisites?: string[];
   }>();
+
+  if (existing.state === "completed" || existing.state === "scrapped") {
+    // Only allow recovery (state → todo), no other edits
+    const isRecovery = body.state === "todo" && !body.title && !body.operationId
+      && !body.type && !("startDate" in body) && !("endDate" in body)
+      && !("importance" in body) && !("notes" in body) && !body.prerequisites;
+    if (!isRecovery) {
+      return c.json({ ok: false, error: "Cannot edit a completed or scrapped task" }, 400);
+    }
+  }
 
   // Moving to a different operation clears prerequisites
   const newOpId = body.operationId ?? existing.operationId;

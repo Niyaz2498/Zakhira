@@ -34,14 +34,22 @@ async function rowToApiKey(
 
 // GET /keys
 app.get("/", async (c) => {
+  const auth = c.get("auth");
   const db = drizzle(c.env.DB, { schema }) as AppDB;
-  const rows = await db.query.apiKeys.findMany();
+  let rows = await db.query.apiKeys.findMany();
+
+  // Users only see their own keys; legacy key (userId=null) sees all
+  if (auth.userId) {
+    rows = rows.filter((r) => r.userId === auth.userId);
+  }
+
   const keys = await Promise.all(rows.map((r) => rowToApiKey(db, r)));
   return c.json({ ok: true, data: keys });
 });
 
-// POST /keys
+// POST /keys — create an additional key for yourself
 app.post("/", async (c) => {
+  const auth = c.get("auth");
   const body = await c.req.json<{
     name: string;
     scope: "all" | "scoped";
@@ -61,6 +69,7 @@ app.post("/", async (c) => {
   const db = drizzle(c.env.DB, { schema }) as AppDB;
   await db.insert(schema.apiKeys).values({
     id,
+    userId: auth.userId,
     keyHash: hash,
     name: body.name.trim(),
     scope: body.scope,
@@ -84,10 +93,16 @@ app.post("/", async (c) => {
 
 // DELETE /keys/:id
 app.delete("/:id", async (c) => {
+  const auth = c.get("auth");
   const db = drizzle(c.env.DB, { schema }) as AppDB;
   const id = c.req.param("id");
   const row = await db.query.apiKeys.findFirst({ where: eq(schema.apiKeys.id, id) });
   if (!row) return c.json({ ok: false, error: "Not found" }, 404);
+
+  // Users can only delete their own keys
+  if (auth.userId && row.userId !== auth.userId) {
+    return c.json({ ok: false, error: "Not found" }, 404);
+  }
 
   await db.delete(schema.apiKeyOperations).where(eq(schema.apiKeyOperations.apiKeyId, id));
   await db.delete(schema.apiKeys).where(eq(schema.apiKeys.id, id));
