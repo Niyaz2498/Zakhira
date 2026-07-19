@@ -7,6 +7,8 @@ const API_URL_STORE = "zakhira_api_url";
 const LAST_SYNC_STORE = "zakhira_last_sync";
 
 export interface AppStore {
+  loaded: boolean;
+  syncing: boolean;
   apiKey: string | null;
   apiUrl: string;
   operations: Operation[];
@@ -16,8 +18,10 @@ export interface AppStore {
 }
 
 let _store: AppStore = {
+  loaded: false,
+  syncing: false,
   apiKey: null,
-  apiUrl: "http://localhost:8787",
+  apiUrl: "http://localhost:8788",
   operations: [],
   tasks: [],
   reminders: [],
@@ -49,8 +53,10 @@ export async function loadFromSecureStore(): Promise<void> {
   ]);
   _store = {
     ..._store,
+    loaded: true,
+    syncing: !!key, // pre-set so dashboard shows spinner before sync() fires
     apiKey: key,
-    apiUrl: url ?? "http://localhost:8787",
+    apiUrl: url ?? "http://localhost:8788",
     lastSyncedAt: lastSync,
   };
   notify();
@@ -65,38 +71,72 @@ export async function saveApiKey(key: string, url: string): Promise<void> {
 
 export async function sync(): Promise<void> {
   if (!_store.apiKey) return;
-  const client = new ZakhiraClient(_store.apiUrl, _store.apiKey);
-  const res = await client.sync(_store.lastSyncedAt ?? undefined);
-  if (!res.ok) return;
-
-  const { operations, tasks, reminders, syncedAt } = res.data;
-
-  // Merge delta: last-write-wins by updatedAt
-  const mergeById = <T extends { id: string; updatedAt: string }>(
-    existing: T[],
-    incoming: T[]
-  ): T[] => {
-    const map = new Map(existing.map((e) => [e.id, e]));
-    for (const item of incoming) {
-      const ex = map.get(item.id);
-      if (!ex || item.updatedAt > ex.updatedAt) map.set(item.id, item);
+  _store = { ..._store, syncing: true };
+  notify();
+  try {
+    const client = new ZakhiraClient(_store.apiUrl, _store.apiKey);
+    const res = await client.sync(_store.lastSyncedAt ?? undefined);
+    if (!res.ok) {
+      console.warn("[sync] server error:", res.error);
+      return;
     }
-    return Array.from(map.values());
-  };
 
+    const { operations, tasks, reminders, syncedAt } = res.data;
+
+    const mergeById = <T extends { id: string; updatedAt: string }>(
+      existing: T[],
+      incoming: T[]
+    ): T[] => {
+      const map = new Map(existing.map((e) => [e.id, e]));
+      for (const item of incoming) {
+        const ex = map.get(item.id);
+        if (!ex || item.updatedAt > ex.updatedAt) map.set(item.id, item);
+      }
+      return Array.from(map.values());
+    };
+
+    _store = {
+      ..._store,
+      operations: mergeById(_store.operations, operations),
+      tasks: mergeById(_store.tasks, tasks),
+      reminders: mergeById(_store.reminders, reminders),
+      lastSyncedAt: syncedAt,
+    };
+
+    await SecureStore.setItemAsync(LAST_SYNC_STORE, syncedAt);
+  } catch (e) {
+    console.warn("[sync] network error:", e);
+  } finally {
+    _store = { ..._store, syncing: false };
+    notify();
+  }
+}
+
+export async function logout(): Promise<void> {
+  await Promise.all([
+    SecureStore.deleteItemAsync(API_KEY_STORE),
+    SecureStore.deleteItemAsync(API_URL_STORE),
+    SecureStore.deleteItemAsync(LAST_SYNC_STORE),
+  ]);
   _store = {
-    ..._store,
-    operations: mergeById(_store.operations, operations),
-    tasks: mergeById(_store.tasks, tasks),
-    reminders: mergeById(_store.reminders, reminders),
-    lastSyncedAt: syncedAt,
+    loaded: true,
+    syncing: false,
+    apiKey: null,
+    apiUrl: "http://localhost:8788",
+    operations: [],
+    tasks: [],
+    reminders: [],
+    lastSyncedAt: null,
   };
-
-  await SecureStore.setItemAsync(LAST_SYNC_STORE, syncedAt);
   notify();
 }
 
 export function getClient(): ZakhiraClient | null {
   if (!_store.apiKey) return null;
   return new ZakhiraClient(_store.apiUrl, _store.apiKey);
+}
+
+export function updateTaskInStore(updated: Task): void {
+  _store = { ..._store, tasks: _store.tasks.map((t) => t.id === updated.id ? updated : t) };
+  notify();
 }

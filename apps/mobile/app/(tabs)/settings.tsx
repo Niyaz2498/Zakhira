@@ -10,9 +10,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../../src/theme/ThemeContext";
 import { useStore } from "../../src/store/useStore";
-import { getClient } from "../../src/store";
+import { getClient, logout } from "../../src/store";
 import type { ApiKey } from "@zakhira/core";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "expo-router";
 
 function KeyRow({
   apiKey,
@@ -58,7 +59,22 @@ const kStyles = StyleSheet.create({
 export default function SettingsScreen() {
   const { tokens, theme, toggleTheme } = useTheme();
   const store = useStore();
+  const router = useRouter();
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+
+  const handleSignOut = useCallback(() => {
+    Alert.alert("Sign out?", "You'll need your API key to reconnect.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign out",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          router.replace("/setup");
+        },
+      },
+    ]);
+  }, [router]);
 
   useEffect(() => {
     const client = getClient();
@@ -129,6 +145,13 @@ export default function SettingsScreen() {
             <Text style={{ color: tokens.textTertiary, fontSize: 13 }}>No keys loaded</Text>
           )}
         </View>
+        {/* Sign out */}
+        <TouchableOpacity
+          style={[s.signOutBtn, { borderColor: "#e05555" }]}
+          onPress={handleSignOut}
+        >
+          <Text style={{ color: "#e05555", fontWeight: "600", fontSize: 15 }}>Sign out</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -159,6 +182,13 @@ function makeStyles(tokens: any) {
       justifyContent: "space-between",
       alignItems: "center",
       paddingVertical: 10,
+    },
+    signOutBtn: {
+      marginTop: 32,
+      borderWidth: 1,
+      borderRadius: 10,
+      paddingVertical: 14,
+      alignItems: "center",
     },
   });
 }

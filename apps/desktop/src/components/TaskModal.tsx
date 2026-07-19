@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { CSSProperties } from "react";
-import { getClient, updateTaskInStore } from "../store";
+import { getClient, getStore, updateTaskInStore } from "../store";
 import { useStore } from "../store/useStore";
 import { canComplete, blockingPrerequisites } from "@zakhira/core";
 import { DateInput } from "./FormControls";
@@ -247,6 +247,22 @@ function OperationPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: Col
   );
 }
 
+// ── Time helpers ─────────────────────────────────────────────────────────────
+
+function formatTime(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const parts: string[] = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  if (!parts.length || sec) parts.push(`${sec}s`);
+  return parts.join(" ");
+}
+
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
 const TrashIcon = () => (
@@ -284,6 +300,49 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
   const [editNotes, setEditNotes] = useState(task.notes ?? "");
   const [editEndDate, setEditEndDate] = useState(task.endDate ?? "");
 
+  // ── Timer ────────────────────────────────────────────────────────────────────
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [sessionSeconds, setSessionSeconds] = useState(0);
+  // Locks the display during async save so there's no flash to 0
+  const [lockedTotal, setLockedTotal] = useState<number | null>(null);
+  const sessionStartRef = useRef<number | null>(null);
+  const intervalRef = useRef<number | null>(null);
+
+  const displaySeconds = lockedTotal !== null ? lockedTotal : ct.timeLogged + sessionSeconds;
+
+  function handleTimerStart() {
+    if (timerRunning) return;
+    sessionStartRef.current = Date.now() - sessionSeconds * 1000;
+    setTimerRunning(true);
+    intervalRef.current = window.setInterval(() => {
+      setSessionSeconds(Math.floor((Date.now() - sessionStartRef.current!) / 1000));
+    }, 1000);
+  }
+
+  const handleTimerStop = useCallback(async () => {
+    if (!timerRunning) return;
+    window.clearInterval(intervalRef.current!);
+    setTimerRunning(false);
+    const total = ct.timeLogged + sessionSeconds;
+    setLockedTotal(total); // freeze display during save
+    setSessionSeconds(0);
+    await updateField({ timeLogged: total });
+    setLockedTotal(null); // release — ct.timeLogged is now total
+  }, [timerRunning, ct.timeLogged, sessionSeconds]);
+
+  async function handleTimerReset() {
+    window.clearInterval(intervalRef.current!);
+    setTimerRunning(false);
+    setSessionSeconds(0);
+    setLockedTotal(null);
+    sessionStartRef.current = null;
+    await updateField({ timeLogged: 0 });
+  }
+
+  useEffect(() => {
+    return () => { if (intervalRef.current) window.clearInterval(intervalRef.current); };
+  }, []);
+
   const isDone = ct.state === "completed" || ct.state === "scrapped";
   const blocking = blockingPrerequisites(ct, allTasksInOp);
   const completable = canComplete(ct, allTasksInOp);
@@ -309,11 +368,15 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
     try {
       const client = getClient();
       if (!client) throw new Error("Not connected");
+      const store = getStore();
+      console.log("[updateField] PATCH", `${store.apiUrl}/tasks/${ct.id}`, fields);
       const res = await client.updateTask(ct.id, fields);
+      console.log("[updateField] response ok:", res.ok, res);
       if (!res.ok) { setError(res.error); return; }
       setCt(res.data);
       updateTaskInStore(res.data);
     } catch (e) {
+      console.error("[updateField] CATCH:", e);
       setError(e instanceof Error ? e.message : "Failed");
     } finally { setBusy(false); }
   }
@@ -365,7 +428,7 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{
-        width: 660, maxHeight: "90vh", display: "flex", flexDirection: "column",
+        width: 660, minHeight: "50vh", maxHeight: "90vh", display: "flex", flexDirection: "column",
         background: `linear-gradient(145deg, ${tokens.bgCard} 65%, ${tierColor(ct.type)}0e 100%)`,
         border: `1.5px solid ${tierColor(ct.type)}55`,
         borderRadius: 16, overflow: "hidden",
@@ -430,6 +493,52 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
                   ))}
                 </div>
               )}
+
+              {/* ── Time Logged ── */}
+              <div style={{
+                marginBottom: 16, padding: "14px 16px",
+                backgroundColor: tokens.bgCard, borderRadius: 10,
+                border: `1px solid ${tokens.border}`,
+              }}>
+                <div style={{ fontSize: 10, color: tokens.textTertiary, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                  Time Logged
+                </div>
+                <div style={{
+                  fontSize: 30, fontWeight: 800, color: timerRunning ? tokens.accent : tokens.textPrimary,
+                  fontFamily: "system-ui, monospace", letterSpacing: "-0.03em", marginBottom: 12,
+                  transition: "color 0.2s",
+                }}>
+                  {formatTime(displaySeconds)}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={timerRunning ? handleTimerStop : handleTimerStart}
+                    disabled={isDone || busy}
+                    style={{
+                      padding: "7px 16px", borderRadius: 7, fontSize: 13, fontWeight: 600,
+                      cursor: isDone || busy ? "not-allowed" : "pointer",
+                      border: "none", opacity: isDone ? 0.4 : 1,
+                      backgroundColor: timerRunning ? "#b80000" : "#015D0A",
+                      boxShadow: timerRunning ? "0 3px 10px rgba(184,0,0,0.4)" : "0 3px 10px rgba(1,93,10,0.4)",
+                      color: "#fff",
+                    }}
+                  >
+                    {timerRunning ? "⏹ Stop" : "▶ Start"}
+                  </button>
+                  <button
+                    onClick={handleTimerReset}
+                    disabled={isDone || busy || (displaySeconds === 0 && !timerRunning)}
+                    style={{
+                      padding: "7px 14px", borderRadius: 7, fontSize: 13, fontWeight: 500,
+                      cursor: "pointer", border: `1px solid ${tokens.border}`,
+                      color: tokens.textSecondary, backgroundColor: tokens.bgSurface,
+                      opacity: (isDone || (displaySeconds === 0 && !timerRunning)) ? 0.4 : 1,
+                    }}
+                  >
+                    ↺ Reset
+                  </button>
+                </div>
+              </div>
 
               {ct.notes && (
                 <div>

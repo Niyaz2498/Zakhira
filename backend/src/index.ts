@@ -19,7 +19,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use(
   "*",
   cors({
-    origin: ["http://localhost:8081", "http://localhost:1420"],
+    origin: ["http://localhost:8081", "http://localhost:1420", "tauri://localhost", "https://tauri.localhost"],
     allowHeaders: ["Authorization", "Content-Type"],
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   })

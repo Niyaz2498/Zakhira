@@ -47,6 +47,7 @@ export interface Task {
   endDate: string | null;
   importance: number | null;
   notes: string | null;
+  timeLogged: number;
   reminderId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -75,6 +76,7 @@ export interface UpdateTaskInput {
   endDate?: string | null;
   importance?: number | null;
   notes?: string | null;
+  timeLogged?: number;
   prerequisites?: string[];
 }
 

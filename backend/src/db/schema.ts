@@ -43,6 +43,7 @@ export const tasks = sqliteTable("tasks", {
   endDate: text("end_date"),
   importance: integer("importance"),
   notes: text("notes"),
+  timeLogged: integer("time_logged").notNull().default(0),
   reminderId: text("reminder_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
-import { getClient, addTask } from "../store";
+import { getClient, addTask, sync } from "../store";
 import { TaskModal } from "../components/TaskModal";
 import { CustomSelect } from "../components/FormControls";
 import type { Task, TaskType, TaskState } from "@zakhira/core";
@@ -384,6 +384,12 @@ export function Dashboard() {
   const [chartMode, setChartMode] = useState<ChartMode>("status");
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  async function handleRefresh() {
+    setSyncing(true);
+    try { await sync(); } finally { setSyncing(false); }
+  }
 
   const defaultOp = store.operations.find((o) => o.isDefault);
   const opMap = useMemo(() => new Map(store.operations.map((o) => [o.id, o.name])), [store.operations]);
@@ -454,14 +460,32 @@ export function Dashboard() {
               {today} · {totalTasks} total task{totalTasks !== 1 ? "s" : ""}
             </div>
           </div>
-          <button onClick={() => setShowCreateTask(true)} style={{
-            padding: "10px 22px", fontWeight: 700, fontSize: 14, borderRadius: 10, cursor: "pointer",
-            background: "linear-gradient(145deg, #f5c842 0%, #b8862e 100%)",
-            boxShadow: "0 4px 18px rgba(217,164,65,0.45)",
-            color: "#16171c", border: "none", letterSpacing: "0.01em",
-          }}>
-            + Create Task
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={handleRefresh}
+              disabled={syncing}
+              title="Sync from server"
+              style={{
+                padding: "10px 16px", fontWeight: 600, fontSize: 14, borderRadius: 10,
+                cursor: syncing ? "not-allowed" : "pointer",
+                border: `1px solid ${tokens.border}`,
+                color: tokens.textSecondary, backgroundColor: tokens.bgCard,
+                opacity: syncing ? 0.6 : 1,
+                display: "flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <span style={{ display: "inline-block", animation: syncing ? "spin 0.8s linear infinite" : "none" }}>↻</span>
+              {syncing ? "Syncing…" : "Refresh"}
+            </button>
+            <button onClick={() => setShowCreateTask(true)} style={{
+              padding: "10px 22px", fontWeight: 700, fontSize: 14, borderRadius: 10, cursor: "pointer",
+              background: "linear-gradient(145deg, #f5c842 0%, #b8862e 100%)",
+              boxShadow: "0 4px 18px rgba(217,164,65,0.45)",
+              color: "#16171c", border: "none", letterSpacing: "0.01em",
+            }}>
+              + Create Task
+            </button>
+          </div>
         </div>
 
         {/* ── Stats + chart bento grid ──────────────────────────────────── */}

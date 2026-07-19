@@ -12,13 +12,13 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useTheme } from "../src/theme/ThemeContext";
-import { saveApiKey } from "../src/store";
+import { saveApiKey, sync } from "../src/store";
 import { ZakhiraClient } from "@zakhira/core";
 
 export default function SetupScreen() {
   const { tokens } = useTheme();
   const router = useRouter();
-  const [url, setUrl] = useState("http://localhost:8787");
+  const [url, setUrl] = useState("http://localhost:8788");
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -38,6 +38,7 @@ export default function SetupScreen() {
         return;
       }
       await saveApiKey(apiKey.trim(), url.trim());
+      sync(); // fire-and-forget so dashboard has data immediately
       router.replace("/(tabs)/");
     } catch {
       Alert.alert("Connection failed", "Could not reach the server. Check the URL.");

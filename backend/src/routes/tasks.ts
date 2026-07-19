@@ -40,6 +40,7 @@ function rowToTask(
     endDate: row.endDate,
     importance: row.importance,
     notes: row.notes,
+    timeLogged: row.timeLogged ?? 0,
     reminderId: row.reminderId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -186,6 +187,7 @@ app.patch("/:id", async (c) => {
     endDate?: string | null;
     importance?: number | null;
     notes?: string | null;
+    timeLogged?: number;
     prerequisites?: string[];
   }>();
 
@@ -249,6 +251,7 @@ app.patch("/:id", async (c) => {
       endDate: "endDate" in body ? (body.endDate ?? null) : existing.endDate,
       importance: "importance" in body ? (body.importance ?? null) : existing.importance,
       notes: "notes" in body ? (body.notes ?? null) : existing.notes,
+      timeLogged: "timeLogged" in body ? (body.timeLogged ?? 0) : (existing.timeLogged ?? 0),
       updatedAt: now,
     })
     .where(eq(schema.tasks.id, id));
