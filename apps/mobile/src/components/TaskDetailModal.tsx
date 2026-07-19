@@ -184,26 +184,30 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
               )}
             </View>
 
-            {/* Status picker */}
-            <Text style={[s.sectionLabel, { color: tokens.textSecondary }]}>Status</Text>
-            <View style={s.stateGrid}>
-              {STATE_OPTIONS.map((opt) => (
-                <TouchableOpacity
-                  key={opt.key}
-                  onPress={() => handleStateChange(opt.key)}
-                  disabled={saving}
-                  style={[
-                    s.stateBtn,
-                    { borderColor: task.state === opt.key ? opt.color : tokens.border },
-                    task.state === opt.key && { backgroundColor: opt.color + "22" },
-                  ]}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: "600", color: task.state === opt.key ? opt.color : tokens.textSecondary }}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {/* Status picker — hidden for completed/scrapped tasks */}
+            {!isDone && (
+              <>
+                <Text style={[s.sectionLabel, { color: tokens.textSecondary }]}>Status</Text>
+                <View style={s.stateGrid}>
+                  {STATE_OPTIONS.map((opt) => (
+                    <TouchableOpacity
+                      key={opt.key}
+                      onPress={() => handleStateChange(opt.key)}
+                      disabled={saving}
+                      style={[
+                        s.stateBtn,
+                        { borderColor: task.state === opt.key ? opt.color : tokens.border },
+                        task.state === opt.key && { backgroundColor: opt.color + "22" },
+                      ]}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: task.state === opt.key ? opt.color : tokens.textSecondary }}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
 
             {/* Time Logged */}
             <Text style={[s.sectionLabel, { color: tokens.textSecondary }]}>Time Logged</Text>

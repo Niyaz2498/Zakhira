@@ -47,7 +47,7 @@ export const light = {
   stateScrapped: "#9a9a94",
 } as const;
 
-export type ColorTokens = typeof dark;
+export type ColorTokens = { readonly [K in keyof typeof dark]: string };
 export type Theme = "dark" | "light";
 
 export function getTokens(theme: Theme): ColorTokens {

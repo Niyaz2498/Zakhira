@@ -32,6 +32,15 @@ const STATUS_GROUP_LABEL: Record<string, string> = {
   todo: "To-Do", in_progress: "In Progress", blocked: "Blocked",
 };
 
+function formatHours(seconds: number): string {
+  if (seconds === 0) return "0h";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 function isOverdue(task: Task): boolean {
   if (!task.endDate || task.state === "completed" || task.state === "scrapped") return false;
   return task.endDate < new Date().toISOString().slice(0, 10);
@@ -191,6 +200,20 @@ export default function DashboardScreen() {
     scrappedMonth: store.tasks.filter((t) => t.state === "scrapped" && isThisMonth(t.updatedAt)).length,
   }), [store.tasks]);
 
+  const timeStats = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const weekAgoStr = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const monthStartStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const withTime = store.tasks.filter((t) => t.timeLogged > 0);
+    return {
+      today: withTime.filter((t) => t.updatedAt.slice(0, 10) === todayStr).reduce((s, t) => s + t.timeLogged, 0),
+      week:  withTime.filter((t) => t.updatedAt.slice(0, 10) >= weekAgoStr).reduce((s, t) => s + t.timeLogged, 0),
+      month: withTime.filter((t) => t.updatedAt.slice(0, 10) >= monthStartStr).reduce((s, t) => s + t.timeLogged, 0),
+      all:   withTime.reduce((s, t) => s + t.timeLogged, 0),
+    };
+  }, [store.tasks]);
+
   const groups = useMemo(() => {
     if (groupBy === "type") {
       return (["main", "side", "exploration"] as const)
@@ -255,6 +278,28 @@ export default function DashboardScreen() {
             <StatCard label="Done/Month"  value={stats.completedMonth} color={tokens.stateCompleted}  icon="✓"  tokens={tokens} />
             <StatCard label="Scrp/Month"  value={stats.scrappedMonth}  color={tokens.stateScrapped}   icon="✕"  tokens={tokens} />
           </ScrollView>
+
+          {/* Time Tracked */}
+          <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+            <Text style={[s.groupTitle, { color: tokens.textSecondary, marginBottom: 10 }]}>Time Tracked</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {([
+                { label: "Today",  value: timeStats.today,  color: tokens.accent },
+                { label: "Week",   value: timeStats.week,   color: "#3b82f6" },
+                { label: "Month",  value: timeStats.month,  color: "#8b5cf6" },
+                { label: "All",    value: timeStats.all,    color: tokens.stateCompleted },
+              ] as const).map((item) => (
+                <View key={item.label} style={[s.timeCard, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}>
+                  <Text style={{ fontSize: 16, fontWeight: "800", color: item.color, fontVariant: ["tabular-nums"] }}>
+                    {formatHours(item.value)}
+                  </Text>
+                  <Text style={{ fontSize: 10, fontWeight: "600", color: tokens.textTertiary, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 4 }}>
+                    {item.label}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
 
           {/* Group-by toggle + active task count */}
           <View style={[s.groupBar, { borderColor: tokens.border }]}>
@@ -345,6 +390,7 @@ const s = StyleSheet.create({
   toggle: { flexDirection: "row", borderRadius: 8, borderWidth: 1, overflow: "hidden" },
   toggleBtn: { paddingHorizontal: 10, paddingVertical: 6 },
   bento: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  timeCard: { flex: 1, borderRadius: 10, borderWidth: 1, padding: 12, alignItems: "center" },
   groupTitle: {
     fontSize: 11,
     fontWeight: "700",

@@ -140,3 +140,13 @@ export function updateTaskInStore(updated: Task): void {
   _store = { ..._store, tasks: _store.tasks.map((t) => t.id === updated.id ? updated : t) };
   notify();
 }
+
+export function addTaskToStore(task: Task): void {
+  _store = { ..._store, tasks: [..._store.tasks, task] };
+  notify();
+}
+
+export function addOperationToStore(op: Operation): void {
+  _store = { ..._store, operations: [..._store.operations, op] };
+  notify();
+}
