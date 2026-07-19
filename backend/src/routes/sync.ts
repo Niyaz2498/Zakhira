@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { gte, eq } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
-import type { Bindings, AuthContext } from "../types.js";
+import type { Bindings, AuthContext, AppDB } from "../types.js";
 import type { Task, Operation, Reminder } from "@zakhira/core";
 
 const app = new Hono<{ Bindings: Bindings; Variables: { auth: AuthContext } }>();
@@ -14,15 +14,15 @@ app.use("*", authMiddleware);
 app.get("/", async (c) => {
   const auth = c.get("auth");
   const since = c.req.query("since");
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
 
-  let opsQuery = (db as any).query.operations.findMany(
+  let opsQuery = db.query.operations.findMany(
     since ? { where: gte(schema.operations.updatedAt, since) } : {}
   );
-  let tasksQuery = (db as any).query.tasks.findMany(
+  let tasksQuery = db.query.tasks.findMany(
     since ? { where: gte(schema.tasks.updatedAt, since) } : {}
   );
-  let remindersQuery = (db as any).query.reminders.findMany(
+  let remindersQuery = db.query.reminders.findMany(
     since ? { where: gte(schema.reminders.updatedAt, since) } : {}
   );
 
@@ -35,15 +35,20 @@ app.get("/", async (c) => {
   // Apply auth scope filtering
   let filteredOps: typeof opRows = opRows;
   let filteredTasks: typeof taskRows = taskRows;
+  let filteredReminders: typeof reminderRows = reminderRows;
   if (auth.scope === "scoped" && auth.allowedOperationIds) {
-    filteredOps = opRows.filter((r: any) => auth.allowedOperationIds!.includes(r.id));
-    filteredTasks = taskRows.filter((t: any) =>
+    filteredOps = opRows.filter((r) => auth.allowedOperationIds!.includes(r.id));
+    filteredTasks = taskRows.filter((t) =>
       auth.allowedOperationIds!.includes(t.operationId)
+    );
+    const allowedTaskIds = new Set(filteredTasks.map((t) => t.id));
+    filteredReminders = reminderRows.filter(
+      (r) => r.taskId === null || allowedTaskIds.has(r.taskId)
     );
   }
 
   // Load all deps for efficiency
-  const allDeps = await (db as any).query.taskDependencies.findMany();
+  const allDeps = await db.query.taskDependencies.findMany();
   const depMap = new Map<string, string[]>();
   for (const d of allDeps) {
     const arr = depMap.get(d.taskId) ?? [];
@@ -51,7 +56,7 @@ app.get("/", async (c) => {
     depMap.set(d.taskId, arr);
   }
 
-  const operations: Operation[] = filteredOps.map((r: any) => ({
+  const operations: Operation[] = filteredOps.map((r) => ({
     id: r.id,
     name: r.name,
     description: r.description,
@@ -63,7 +68,7 @@ app.get("/", async (c) => {
     updatedAt: r.updatedAt,
   }));
 
-  const tasks: Task[] = filteredTasks.map((r: any) => ({
+  const tasks: Task[] = filteredTasks.map((r) => ({
     id: r.id,
     operationId: r.operationId,
     title: r.title,
@@ -79,7 +84,7 @@ app.get("/", async (c) => {
     prerequisites: depMap.get(r.id) ?? [],
   }));
 
-  const reminders: Reminder[] = reminderRows.map((r: any) => ({
+  const reminders: Reminder[] = filteredReminders.map((r) => ({
     id: r.id,
     taskId: r.taskId,
     title: r.title,

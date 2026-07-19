@@ -4,7 +4,8 @@ import { getClient, updateTaskInStore } from "../store";
 import { useStore } from "../store/useStore";
 import { canComplete, blockingPrerequisites } from "@zakhira/core";
 import { DateInput } from "./FormControls";
-import type { Task, TaskType, TaskState } from "@zakhira/core";
+import type { Task, TaskType, TaskState, UpdateTaskInput } from "@zakhira/core";
+import type { ColorTokens } from "@zakhira/ui";
 
 type Priority = "low" | "medium" | "high";
 const PRIORITY_VALUE: Record<Priority, number> = { low: 1, medium: 2, high: 3 };
@@ -19,7 +20,7 @@ const STATE_LABEL: Record<string, string> = {
 };
 const ALL_STATES: TaskState[] = ["todo", "in_progress", "blocked", "completed", "scrapped"];
 
-function stateColor(state: string, tokens: any): string {
+function stateColor(state: string, tokens: ColorTokens): string {
   const m: Record<string, string> = {
     todo: tokens.stateTodo, in_progress: tokens.stateInProgress,
     blocked: tokens.stateBlocked, completed: tokens.stateCompleted, scrapped: tokens.stateScrapped,
@@ -64,7 +65,7 @@ function triggerStyle(color: string, open: boolean): CSSProperties {
     transition: "border-color 0.15s, box-shadow 0.15s",
   };
 }
-function dropdownStyle(tokens: any): CSSProperties {
+function dropdownStyle(tokens: ColorTokens): CSSProperties {
   return {
     position: "absolute", top: "calc(100% + 6px)", left: 0,
     backgroundColor: tokens.bgCard, border: `1px solid ${tokens.borderStrong}`,
@@ -72,7 +73,7 @@ function dropdownStyle(tokens: any): CSSProperties {
     zIndex: 500, padding: "4px", minWidth: 172,
   };
 }
-function itemStyle(isCurrent: boolean, isHovered: boolean, color: string, tokens: any): CSSProperties {
+function itemStyle(isCurrent: boolean, isHovered: boolean, color: string, tokens: ColorTokens): CSSProperties {
   return {
     width: "100%", padding: "8px 11px", textAlign: "left", borderRadius: 7,
     display: "flex", alignItems: "center", gap: 9, cursor: "pointer",
@@ -85,7 +86,7 @@ function itemStyle(isCurrent: boolean, isHovered: boolean, color: string, tokens
 
 // ── Badge pickers ─────────────────────────────────────────────────────────────
 
-function StatusPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: any; onUpdate: (fields: any) => void; busy: boolean }) {
+function StatusPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: ColorTokens; onUpdate: (fields: UpdateTaskInput) => void; busy: boolean }) {
   const p = usePicker();
   const sc = stateColor(ct.state, tokens);
   return (
@@ -119,7 +120,7 @@ function StatusPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: any; o
   );
 }
 
-function TypePicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: any; onUpdate: (fields: any) => void; busy: boolean }) {
+function TypePicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: ColorTokens; onUpdate: (fields: UpdateTaskInput) => void; busy: boolean }) {
   const p = usePicker();
   const tc = tierColor(ct.type);
   return (
@@ -152,7 +153,7 @@ function TypePicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: any; onU
   );
 }
 
-function PriorityPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: any; onUpdate: (fields: any) => void; busy: boolean }) {
+function PriorityPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: ColorTokens; onUpdate: (fields: UpdateTaskInput) => void; busy: boolean }) {
   const p = usePicker();
   const priority = ct.importance !== null ? VALUE_PRIORITY[ct.importance] : null;
   const color = priority ? PRIORITY_COLOR[priority] : tokens.textTertiary;
@@ -205,7 +206,7 @@ function PriorityPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: any;
   );
 }
 
-function OperationPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: any; onUpdate: (fields: any) => void; busy: boolean }) {
+function OperationPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: ColorTokens; onUpdate: (fields: UpdateTaskInput) => void; busy: boolean }) {
   const p = usePicker();
   const store = useStore();
   const currentOp = store.operations.find(o => o.id === ct.operationId);
@@ -263,7 +264,7 @@ interface Props {
   task: Task;
   allTasksInOp: Task[];
   opName: string;
-  tokens: any;
+  tokens: ColorTokens;
   onClose: () => void;
 }
 
@@ -303,12 +304,12 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
   }, [confirm, mode, onClose]);
 
   // Update fields without closing (for badge pickers)
-  async function updateField(fields: Record<string, any>) {
+  async function updateField(fields: UpdateTaskInput) {
     setBusy(true); setError(null);
     try {
       const client = getClient();
       if (!client) throw new Error("Not connected");
-      const res = await client.updateTask(ct.id, fields as any);
+      const res = await client.updateTask(ct.id, fields);
       if (!res.ok) { setError(res.error); return; }
       setCt(res.data);
       updateTaskInStore(res.data);

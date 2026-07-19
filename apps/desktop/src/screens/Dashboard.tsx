@@ -6,6 +6,7 @@ import { getClient, addTask } from "../store";
 import { TaskModal } from "../components/TaskModal";
 import { CustomSelect } from "../components/FormControls";
 import type { Task, TaskType, TaskState } from "@zakhira/core";
+import type { ColorTokens } from "@zakhira/ui";
 
 type GroupBy = "type" | "operation" | "status";
 type ChartMode = "status" | "type";
@@ -27,12 +28,12 @@ const CHART_TYPE = [
   { key: "exploration",  label: "Exploration",  color: "#f97316" },
 ];
 
-function tierColor(type: string, tokens: any): string {
+function tierColor(type: string, tokens: ColorTokens): string {
   if (type === "main") return tokens.tierMain;
   if (type === "side") return tokens.tierSide;
   return tokens.tierExplore;
 }
-function stateColor(state: string, tokens: any): string {
+function stateColor(state: string, tokens: ColorTokens): string {
   const m: Record<string, string> = {
     todo: tokens.stateTodo, in_progress: tokens.stateInProgress,
     blocked: tokens.stateBlocked, completed: tokens.stateCompleted, scrapped: tokens.stateScrapped,
@@ -63,7 +64,7 @@ function arcPath(cx: number, cy: number, R: number, r: number, a1: number, a2: n
   return `M ${f(x1)} ${f(y1)} A ${R} ${R} 0 ${large} 1 ${f(x2)} ${f(y2)} L ${f(ix1)} ${f(iy1)} A ${r} ${r} 0 ${large} 0 ${f(ix2)} ${f(iy2)} Z`;
 }
 
-function DoughnutChart({ segments, tokens, size = 180 }: { segments: Segment[]; tokens: any; size?: number }) {
+function DoughnutChart({ segments, tokens, size = 180 }: { segments: Segment[]; tokens: ColorTokens; size?: number }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
@@ -167,7 +168,7 @@ function DoughnutChart({ segments, tokens, size = 180 }: { segments: Segment[]; 
 
 // ── Stat card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, color, icon, tokens }: { label: string; value: number; color: string; icon: string; tokens: any }) {
+function StatCard({ label, value, color, icon, tokens }: { label: string; value: number; color: string; icon: string; tokens: ColorTokens }) {
   return (
     <div style={{
       borderRadius: 12, padding: "16px 18px 16px 22px",
@@ -191,7 +192,7 @@ function StatCard({ label, value, color, icon, tokens }: { label: string; value:
 
 function PillToggle({ options, value, onChange }: { options: { key: string; label: string }[]; value: string; onChange: (k: string) => void }) {
   return (
-    <div style={{ display: "flex", border: `1px solid ${undefined}`, borderRadius: 8, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.05)", padding: 2, gap: 2 }}>
+    <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.05)", padding: 2, gap: 2 }}>
       {options.map((o) => (
         <button key={o.key} onClick={() => onChange(o.key)} style={{
           padding: "5px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", borderRadius: 6,
@@ -210,7 +211,7 @@ function PillToggle({ options, value, onChange }: { options: { key: string; labe
 
 // ── Task tile ────────────────────────────────────────────────────────────────
 
-function TaskTile({ task, opName, tokens, onClick }: { task: Task; opName: string; tokens: any; onClick: () => void }) {
+function TaskTile({ task, opName, tokens, onClick }: { task: Task; opName: string; tokens: ColorTokens; onClick: () => void }) {
   const PRIORITY_LABEL: Record<number, string> = { 1: "Low", 2: "Medium", 3: "High" };
   const PRIORITY_COLOR: Record<number, string> = { 1: "#5aa9f0", 2: "#f59e0b", 3: "#ef4444" };
   const priority = task.importance !== null ? PRIORITY_LABEL[task.importance] : null;
@@ -258,7 +259,7 @@ function FieldLabel({ text, required }: { text: string; required?: boolean }) {
   );
 }
 
-function CreateTaskModal({ defaultOpId, tokens, onClose }: { defaultOpId: string; tokens: any; onClose: () => void }) {
+function CreateTaskModal({ defaultOpId, tokens, onClose }: { defaultOpId: string; tokens: ColorTokens; onClose: () => void }) {
   const store = useStore();
   const [title, setTitle] = useState("");
   const [type, setType] = useState<TaskType>("main");

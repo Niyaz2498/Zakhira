@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, or } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware, assertOperationAccess } from "../middleware/auth.js";
-import type { Bindings, AuthContext } from "../types.js";
+import type { Bindings, AuthContext, AppDB } from "../types.js";
 import type { Task } from "@zakhira/core";
 import {
   canComplete,
@@ -15,18 +15,15 @@ const app = new Hono<{ Bindings: Bindings; Variables: { auth: AuthContext } }>()
 
 app.use("*", authMiddleware);
 
-async function loadTask(
-  db: ReturnType<typeof drizzle>,
-  id: string
-): Promise<Task | null> {
-  const row = await (db as any).query.tasks.findFirst({
+async function loadTask(db: AppDB, id: string): Promise<Task | null> {
+  const row = await db.query.tasks.findFirst({
     where: eq(schema.tasks.id, id),
   });
   if (!row) return null;
-  const deps = await (db as any).query.taskDependencies.findMany({
+  const deps = await db.query.taskDependencies.findMany({
     where: eq(schema.taskDependencies.taskId, id),
   });
-  return rowToTask(row, deps.map((d: any) => d.prerequisiteId));
+  return rowToTask(row, deps.map((d) => d.prerequisiteId));
 }
 
 function rowToTask(
@@ -50,58 +47,55 @@ function rowToTask(
   };
 }
 
-async function loadTasksForOp(
-  db: ReturnType<typeof drizzle>,
-  operationId: string
-): Promise<Task[]> {
-  const rows = await (db as any).query.tasks.findMany({
+async function loadTasksForOp(db: AppDB, operationId: string): Promise<Task[]> {
+  const rows = await db.query.tasks.findMany({
     where: eq(schema.tasks.operationId, operationId),
   });
-  const allDeps = await (db as any).query.taskDependencies.findMany();
+  const allDeps = await db.query.taskDependencies.findMany();
   const depMap = new Map<string, string[]>();
   for (const d of allDeps) {
     const arr = depMap.get(d.taskId) ?? [];
     arr.push(d.prerequisiteId);
     depMap.set(d.taskId, arr);
   }
-  return rows.map((r: any) => rowToTask(r, depMap.get(r.id) ?? []));
+  return rows.map((r) => rowToTask(r, depMap.get(r.id) ?? []));
 }
 
 // GET /tasks[?operationId=...]
 app.get("/", async (c) => {
   const auth = c.get("auth");
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
   const opId = c.req.query("operationId");
 
   let rows: (typeof schema.tasks.$inferSelect)[];
   if (opId) {
     assertOperationAccess(auth, opId);
-    rows = await (db as any).query.tasks.findMany({
+    rows = await db.query.tasks.findMany({
       where: eq(schema.tasks.operationId, opId),
     });
   } else {
-    rows = await (db as any).query.tasks.findMany();
+    rows = await db.query.tasks.findMany();
     if (auth.scope === "scoped" && auth.allowedOperationIds) {
-      rows = rows.filter((r: any) => auth.allowedOperationIds!.includes(r.operationId));
+      rows = rows.filter((r) => auth.allowedOperationIds!.includes(r.operationId));
     }
   }
 
-  const allDeps = await (db as any).query.taskDependencies.findMany();
+  const allDeps = await db.query.taskDependencies.findMany();
   const depMap = new Map<string, string[]>();
   for (const d of allDeps) {
     const arr = depMap.get(d.taskId) ?? [];
     arr.push(d.prerequisiteId);
     depMap.set(d.taskId, arr);
   }
-  const tasks = rows.map((r: any) => rowToTask(r, depMap.get(r.id) ?? []));
+  const tasks = rows.map((r) => rowToTask(r, depMap.get(r.id) ?? []));
   return c.json({ ok: true, data: tasks });
 });
 
 // GET /tasks/:id
 app.get("/:id", async (c) => {
   const auth = c.get("auth");
-  const db = drizzle(c.env.DB, { schema });
-  const task = await loadTask(db as any, c.req.param("id"));
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const task = await loadTask(db, c.req.param("id"));
   if (!task) return c.json({ ok: false, error: "Not found" }, 404);
   assertOperationAccess(auth, task.operationId);
   return c.json({ ok: true, data: task });
@@ -126,11 +120,11 @@ app.post("/", async (c) => {
   if (!body.operationId) return c.json({ ok: false, error: "operationId is required" }, 400);
   assertOperationAccess(auth, body.operationId);
 
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
 
   // Validate prerequisites
   if (body.prerequisites?.length) {
-    const opTasks = await loadTasksForOp(db as any, body.operationId);
+    const opTasks = await loadTasksForOp(db, body.operationId);
     const prereqMap = buildPrereqMap(opTasks);
     // New task has no ID yet; cycle check uses a placeholder
     const tempId = "__new__";
@@ -149,7 +143,7 @@ app.post("/", async (c) => {
 
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
-  await (db as any).insert(schema.tasks).values({
+  await db.insert(schema.tasks).values({
     id,
     operationId: body.operationId,
     title: body.title.trim(),
@@ -166,20 +160,20 @@ app.post("/", async (c) => {
 
   if (body.prerequisites?.length) {
     for (const prereqId of body.prerequisites) {
-      await (db as any).insert(schema.taskDependencies).values({ taskId: id, prerequisiteId: prereqId });
+      await db.insert(schema.taskDependencies).values({ taskId: id, prerequisiteId: prereqId });
     }
   }
 
-  const task = await loadTask(db as any, id);
+  const task = await loadTask(db, id);
   return c.json({ ok: true, data: task }, 201);
 });
 
 // PATCH /tasks/:id
 app.patch("/:id", async (c) => {
   const auth = c.get("auth");
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
   const id = c.req.param("id");
-  const existing = await loadTask(db as any, id);
+  const existing = await loadTask(db, id);
   if (!existing) return c.json({ ok: false, error: "Not found" }, 404);
   assertOperationAccess(auth, existing.operationId);
 
@@ -210,7 +204,7 @@ app.patch("/:id", async (c) => {
 
   // If state → completed, check gating
   if (body.state === "completed" && existing.state !== "completed") {
-    const opTasks = await loadTasksForOp(db as any, existing.operationId);
+    const opTasks = await loadTasksForOp(db, existing.operationId);
     const taskWithNewPrereqs = { ...existing, prerequisites: newPrereqs };
     if (!canComplete(taskWithNewPrereqs, opTasks)) {
       return c.json({
@@ -223,7 +217,7 @@ app.patch("/:id", async (c) => {
 
   // Validate prerequisites (only if explicitly provided and op not changed)
   if (!opChanged && body.prerequisites !== undefined) {
-    const opTasks = await loadTasksForOp(db as any, existing.operationId);
+    const opTasks = await loadTasksForOp(db, existing.operationId);
     const prereqMap = buildPrereqMap(opTasks);
     prereqMap.set(id, body.prerequisites);
     const cyclers = findCycleCreators(id, body.prerequisites, prereqMap);
@@ -238,7 +232,7 @@ app.patch("/:id", async (c) => {
   }
 
   const now = new Date().toISOString();
-  await (db as any)
+  await db
     .update(schema.tasks)
     .set({
       title: body.title ?? existing.title,
@@ -254,28 +248,28 @@ app.patch("/:id", async (c) => {
     .where(eq(schema.tasks.id, id));
 
   // Rebuild dependency rows
-  await (db as any)
+  await db
     .delete(schema.taskDependencies)
     .where(eq(schema.taskDependencies.taskId, id));
   for (const prereqId of newPrereqs) {
-    await (db as any).insert(schema.taskDependencies).values({ taskId: id, prerequisiteId: prereqId });
+    await db.insert(schema.taskDependencies).values({ taskId: id, prerequisiteId: prereqId });
   }
 
-  const updated = await loadTask(db as any, id);
+  const updated = await loadTask(db, id);
   return c.json({ ok: true, data: updated });
 });
 
 // DELETE /tasks/:id
 app.delete("/:id", async (c) => {
   const auth = c.get("auth");
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
   const id = c.req.param("id");
-  const task = await loadTask(db as any, id);
+  const task = await loadTask(db, id);
   if (!task) return c.json({ ok: false, error: "Not found" }, 404);
   assertOperationAccess(auth, task.operationId);
 
   // Remove all dependency edges (both directions)
-  await (db as any)
+  await db
     .delete(schema.taskDependencies)
     .where(
       or(
@@ -283,7 +277,7 @@ app.delete("/:id", async (c) => {
         eq(schema.taskDependencies.prerequisiteId, id)
       )
     );
-  await (db as any).delete(schema.tasks).where(eq(schema.tasks.id, id));
+  await db.delete(schema.tasks).where(eq(schema.tasks.id, id));
 
   return c.json({ ok: true, data: { deleted: true } });
 });

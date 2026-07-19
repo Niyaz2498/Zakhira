@@ -3,6 +3,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { getClient, updateTaskInStore } from "../store";
 import type { Task } from "@zakhira/core";
+import type { ColorTokens } from "@zakhira/ui";
 
 type Filter = "all" | "completed" | "scrapped";
 
@@ -11,7 +12,7 @@ const TYPE_LABEL: Record<string, string> = { main: "Main Quest", side: "Side Que
 const PRIORITY_LABEL: Record<number, string> = { 1: "Low", 2: "Medium", 3: "High" };
 const PRIORITY_COLOR: Record<number, string> = { 1: "#5aa9f0", 2: "#f59e0b", 3: "#ef4444" };
 
-function tierColor(type: string, tokens: any): string {
+function tierColor(type: string, tokens: ColorTokens): string {
   if (type === "main") return tokens.tierMain;
   if (type === "side") return tokens.tierSide;
   return tokens.tierExplore;

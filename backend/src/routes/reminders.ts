@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
-import type { Bindings, AuthContext } from "../types.js";
+import type { Bindings, AuthContext, AppDB } from "../types.js";
 import type { Reminder } from "@zakhira/core";
 
 const app = new Hono<{ Bindings: Bindings; Variables: { auth: AuthContext } }>();
@@ -26,15 +26,15 @@ function rowToReminder(row: typeof schema.reminders.$inferSelect): Reminder {
 
 // GET /reminders
 app.get("/", async (c) => {
-  const db = drizzle(c.env.DB, { schema });
-  const rows = await (db as any).query.reminders.findMany();
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const rows = await db.query.reminders.findMany();
   return c.json({ ok: true, data: rows.map(rowToReminder) });
 });
 
 // GET /reminders/:id
 app.get("/:id", async (c) => {
-  const db = drizzle(c.env.DB, { schema });
-  const row = await (db as any).query.reminders.findFirst({
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const row = await db.query.reminders.findFirst({
     where: eq(schema.reminders.id, c.req.param("id")),
   });
   if (!row) return c.json({ ok: false, error: "Not found" }, 404);
@@ -58,9 +58,9 @@ app.post("/", async (c) => {
 
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
 
-  await (db as any).insert(schema.reminders).values({
+  await db.insert(schema.reminders).values({
     id,
     taskId: body.taskId ?? null,
     title: body.title.trim(),
@@ -72,7 +72,7 @@ app.post("/", async (c) => {
     updatedAt: now,
   });
 
-  const row = await (db as any).query.reminders.findFirst({
+  const row = await db.query.reminders.findFirst({
     where: eq(schema.reminders.id, id),
   });
   return c.json({ ok: true, data: rowToReminder(row) }, 201);
@@ -80,9 +80,9 @@ app.post("/", async (c) => {
 
 // PATCH /reminders/:id
 app.patch("/:id", async (c) => {
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
   const id = c.req.param("id");
-  const row = await (db as any).query.reminders.findFirst({
+  const row = await db.query.reminders.findFirst({
     where: eq(schema.reminders.id, id),
   });
   if (!row) return c.json({ ok: false, error: "Not found" }, 404);
@@ -101,7 +101,7 @@ app.patch("/:id", async (c) => {
   }
 
   const now = new Date().toISOString();
-  await (db as any)
+  await db
     .update(schema.reminders)
     .set({
       title: body.title ?? row.title,
@@ -114,7 +114,7 @@ app.patch("/:id", async (c) => {
     })
     .where(eq(schema.reminders.id, id));
 
-  const updated = await (db as any).query.reminders.findFirst({
+  const updated = await db.query.reminders.findFirst({
     where: eq(schema.reminders.id, id),
   });
   return c.json({ ok: true, data: rowToReminder(updated) });
@@ -122,13 +122,13 @@ app.patch("/:id", async (c) => {
 
 // DELETE /reminders/:id
 app.delete("/:id", async (c) => {
-  const db = drizzle(c.env.DB, { schema });
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
   const id = c.req.param("id");
-  const row = await (db as any).query.reminders.findFirst({
+  const row = await db.query.reminders.findFirst({
     where: eq(schema.reminders.id, id),
   });
   if (!row) return c.json({ ok: false, error: "Not found" }, 404);
-  await (db as any).delete(schema.reminders).where(eq(schema.reminders.id, id));
+  await db.delete(schema.reminders).where(eq(schema.reminders.id, id));
   return c.json({ ok: true, data: { deleted: true } });
 });
 

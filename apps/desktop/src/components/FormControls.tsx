@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import type { ColorTokens } from "@zakhira/ui";
 
 // ── Icons ────────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ export function CustomSelect({ value, onChange, options, placeholder = "Select�
   onChange: (v: string) => void;
   options: SelectOption[];
   placeholder?: string;
-  tokens: any;
+  tokens: ColorTokens;
 }) {
   const [open, setOpen] = useState(false);
   const [hoverItem, setHoverItem] = useState<string | null>(null);
@@ -116,7 +117,7 @@ export function CustomSelect({ value, onChange, options, placeholder = "Select�
 export function DateInput({ value, onChange, tokens }: {
   value: string;
   onChange: (v: string) => void;
-  tokens: any;
+  tokens: ColorTokens;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(false);
@@ -136,14 +137,13 @@ export function DateInput({ value, onChange, tokens }: {
           border: `1px solid ${focused ? tokens.accent : tokens.border}`,
           borderRadius: 8, color: value ? tokens.textPrimary : tokens.textTertiary,
           fontSize: 14, outline: "none", boxSizing: "border-box" as const,
-          colorScheme: "dark" as any, cursor: "pointer",
+          colorScheme: "dark", cursor: "pointer",
           fontFamily: "system-ui, sans-serif",
           boxShadow: focused ? `0 0 0 3px ${tokens.accent}22` : "none",
           transition: "border-color 0.15s, box-shadow 0.15s",
         }}
       />
       <span
-        onClick={() => (ref.current as any)?.showPicker?.()}
         style={{
           position: "absolute", right: 11, top: "50%",
           transform: "translateY(-50%)", display: "flex", alignItems: "center",

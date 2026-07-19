@@ -1,10 +1,12 @@
 import { useState, useMemo } from "react";
+import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { getClient, addOperation } from "../store";
 import { computeOperationStats } from "@zakhira/core";
 import { DateInput } from "../components/FormControls";
 import type { Operation } from "@zakhira/core";
+import type { ColorTokens } from "@zakhira/ui";
 
 type Priority = "low" | "medium" | "high";
 const PRIORITY_VALUE: Record<Priority, number> = { low: 1, medium: 2, high: 3 };
@@ -17,7 +19,7 @@ function FieldLabel({ text, required }: { text: string; required?: boolean }) {
   );
 }
 
-function CreateOperationModal({ tokens, onClose }: { tokens: any; onClose: () => void }) {
+function CreateOperationModal({ tokens, onClose }: { tokens: ColorTokens; onClose: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -47,7 +49,7 @@ function CreateOperationModal({ tokens, onClose }: { tokens: any; onClose: () =>
     } finally { setSaving(false); }
   }
 
-  const inp: React.CSSProperties = {
+  const inp: CSSProperties = {
     width: "100%", padding: "9px 11px", backgroundColor: tokens.bgInput,
     border: `1px solid ${tokens.border}`, borderRadius: 8, color: tokens.textPrimary,
     fontSize: 14, outline: "none", boxSizing: "border-box",
@@ -129,7 +131,7 @@ function OperationCard({
 }: {
   op: Operation;
   tasks: ReturnType<typeof useStore>["tasks"];
-  tokens: any;
+  tokens: ColorTokens;
 }) {
   const opTasks = tasks.filter((t) => t.operationId === op.id);
   const stats = computeOperationStats(opTasks);

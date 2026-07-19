@@ -1,7 +1,9 @@
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { saveCredentials, sync } from "../store";
 import { ZakhiraClient } from "@zakhira/core";
+import type { ColorTokens } from "@zakhira/ui";
 
 export function Setup() {
   const { tokens } = useTheme();
@@ -120,7 +122,7 @@ export function Setup() {
   );
 }
 
-function inputStyle(tokens: any): React.CSSProperties {
+function inputStyle(tokens: ColorTokens): CSSProperties {
   return {
     display: "block",
     width: "100%",

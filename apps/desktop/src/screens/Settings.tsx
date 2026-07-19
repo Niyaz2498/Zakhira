@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
+import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { getClient, setDisplayName } from "../store";
 import type { ApiKey } from "@zakhira/core";
+import type { ColorTokens } from "@zakhira/ui";
 
-function SectionTitle({ label, tokens }: { label: string; tokens: any }) {
+function SectionTitle({ label, tokens }: { label: string; tokens: ColorTokens }) {
   return (
     <div
       style={{
@@ -46,7 +48,7 @@ export function Settings() {
     if (res.ok) setApiKeys((prev) => prev.filter((k) => k.id !== id));
   }
 
-  const section: React.CSSProperties = {
+  const section: CSSProperties = {
     backgroundColor: tokens.bgCard,
     border: `1px solid ${tokens.border}`,
     borderRadius: 12,
@@ -54,7 +56,7 @@ export function Settings() {
     marginBottom: 20,
   };
 
-  const row: React.CSSProperties = {
+  const row: CSSProperties = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -62,7 +64,7 @@ export function Settings() {
     borderBottom: `1px solid ${tokens.border}`,
   };
 
-  const lastRow: React.CSSProperties = {
+  const lastRow: CSSProperties = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",

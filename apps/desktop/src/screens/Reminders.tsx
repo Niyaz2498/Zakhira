@@ -1,9 +1,11 @@
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { getClient, addReminder } from "../store";
 import { CustomSelect, DateInput } from "../components/FormControls";
 import type { Reminder, Recurrence } from "@zakhira/core";
+import type { ColorTokens } from "@zakhira/ui";
 
 const RECURRENCE_LABEL: Record<string, string> = { once: "Once", daily: "Daily", yearly: "Yearly" };
 
@@ -15,7 +17,7 @@ function FieldLabel({ text, required }: { text: string; required?: boolean }) {
   );
 }
 
-function CreateReminderModal({ tokens, onClose }: { tokens: any; onClose: () => void }) {
+function CreateReminderModal({ tokens, onClose }: { tokens: ColorTokens; onClose: () => void }) {
   const store = useStore();
   const [title, setTitle] = useState("");
   const [fireHour, setFireHour] = useState<number>(9);
@@ -47,7 +49,7 @@ function CreateReminderModal({ tokens, onClose }: { tokens: any; onClose: () => 
     } finally { setSaving(false); }
   }
 
-  const inp: React.CSSProperties = {
+  const inp: CSSProperties = {
     width: "100%", padding: "9px 11px", backgroundColor: tokens.bgInput,
     border: `1px solid ${tokens.border}`, borderRadius: 8, color: tokens.textPrimary,
     fontSize: 14, outline: "none", boxSizing: "border-box",
@@ -129,7 +131,7 @@ function CreateReminderModal({ tokens, onClose }: { tokens: any; onClose: () => 
   );
 }
 
-function ReminderRow({ reminder, tokens }: { reminder: Reminder; tokens: any }) {
+function ReminderRow({ reminder, tokens }: { reminder: Reminder; tokens: ColorTokens }) {
   return (
     <div style={{ display: "flex", alignItems: "center", padding: "12px 14px", backgroundColor: tokens.bgCard, border: `1px solid ${tokens.border}`, borderRadius: 10, marginBottom: 8, cursor: "pointer" }}>
       <div style={{ flex: 1 }}>
