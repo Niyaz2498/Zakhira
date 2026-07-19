@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ThemeProvider, useTheme } from "./theme/ThemeContext";
-import { loadFromStore, sync } from "./store";
+import { loadFromStore, sync, logout } from "./store";
 import { useStore } from "./store/useStore";
 import { Dashboard } from "./screens/Dashboard";
 import { Operations } from "./screens/Operations";
@@ -90,8 +90,8 @@ function Shell() {
           })}
         </div>
 
-        {/* Theme toggle */}
-        <div style={{ padding: "12px 16px", borderTop: `1px solid ${tokens.border}` }}>
+        {/* Footer: theme toggle + sign out */}
+        <div style={{ padding: "12px 16px", borderTop: `1px solid ${tokens.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
           <button
             onClick={toggleTheme}
             style={{
@@ -103,6 +103,18 @@ function Shell() {
             }}
           >
             {theme === "dark" ? "☀ Light mode" : "🌙 Dark mode"}
+          </button>
+          <button
+            onClick={logout}
+            style={{
+              color: tokens.textTertiary,
+              fontSize: 13,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            ⏏ Sign out
           </button>
         </div>
       </nav>

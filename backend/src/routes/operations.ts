@@ -30,7 +30,7 @@ app.get("/", async (c) => {
   const db = drizzle(c.env.DB, { schema });
   let rows = await db.query.operations.findMany();
 
-  if (auth.scope === "scoped" && auth.allowedOperationIds) {
+  if (auth.allowedOperationIds) {
     rows = rows.filter((r) => auth.allowedOperationIds!.includes(r.id));
   }
 
@@ -69,6 +69,7 @@ app.post("/", async (c) => {
   const db = drizzle(c.env.DB, { schema });
   await db.insert(schema.operations).values({
     id,
+    userId: auth.userId,
     name: body.name.trim(),
     description: body.description ?? null,
     startDate: body.startDate ?? null,

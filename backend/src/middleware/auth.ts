@@ -35,13 +35,30 @@ export const authMiddleware = createMiddleware<{
     .set({ lastUsedAt: now, updatedAt: now })
     .where(eq(schema.apiKeys.id, keyRow.id));
 
-  const allowedOperationIds =
-    keyRow.scope === "all"
-      ? null // null = all
-      : keyRow.apiKeyOperations.map((r) => r.operationId);
+  let allowedOperationIds: string[] | null = null;
+
+  if (keyRow.userId) {
+    if (keyRow.scope === "all") {
+      // Load all operations owned by this user
+      const userOps = await db.query.operations.findMany({
+        where: eq(schema.operations.userId, keyRow.userId),
+        columns: { id: true },
+      });
+      allowedOperationIds = userOps.map((op) => op.id);
+    } else {
+      allowedOperationIds = keyRow.apiKeyOperations.map((r) => r.operationId);
+    }
+  } else {
+    // Legacy key (no userId): old scope behaviour
+    if (keyRow.scope === "scoped") {
+      allowedOperationIds = keyRow.apiKeyOperations.map((r) => r.operationId);
+    }
+    // scope="all" with no userId → allowedOperationIds stays null (full access)
+  }
 
   c.set("auth", {
     keyId: keyRow.id,
+    userId: keyRow.userId ?? null,
     scope: keyRow.scope as "all" | "scoped",
     allowedOperationIds,
   });
@@ -53,8 +70,8 @@ export const authMiddleware = createMiddleware<{
  * Throws 403 if the authed key cannot access the given operationId.
  */
 export function assertOperationAccess(auth: AuthContext, operationId: string): void {
-  if (auth.scope === "all") return;
-  if (!auth.allowedOperationIds?.includes(operationId)) {
+  if (auth.allowedOperationIds === null) return; // legacy full access
+  if (!auth.allowedOperationIds.includes(operationId)) {
     throw new HTTPException(403, { message: "Access denied to this operation" });
   }
 }

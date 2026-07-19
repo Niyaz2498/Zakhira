@@ -3,6 +3,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { getClient, updateTaskInStore } from "../store";
 import type { Task } from "@zakhira/core";
+import { computeOperationStats } from "@zakhira/core";
 import type { ColorTokens } from "@zakhira/ui";
 
 type Filter = "all" | "completed" | "scrapped";
@@ -39,6 +40,7 @@ export function TaskHistory() {
   const [filter, setFilter] = useState<Filter>("all");
   const [recovering, setRecovering] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmTask, setConfirmTask] = useState<Task | null>(null);
 
   const opSet = useMemo(() => new Set(store.operations.map((o) => o.id)), [store.operations]);
   const opMap = useMemo(() => new Map(store.operations.map((o) => [o.id, o.name])), [store.operations]);
@@ -74,6 +76,7 @@ export function TaskHistory() {
   }
 
   return (
+    <>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: tokens.bgPage }}>
 
       {/* ── Header ── */}
@@ -201,7 +204,7 @@ export function TaskHistory() {
                   {/* Recover button — only if operation exists */}
                   {opExists ? (
                     <button
-                      onClick={() => recover(task)}
+                      onClick={() => setConfirmTask(task)}
                       disabled={isRecovering}
                       style={{
                         padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700,
@@ -233,5 +236,65 @@ export function TaskHistory() {
         ))}
       </div>
     </div>
+
+    {confirmTask && (() => {
+      const opTasks = store.tasks.filter((t) => t.operationId === confirmTask.operationId);
+      const opWasComplete = computeOperationStats(opTasks).isComplete;
+      const opName = opMap.get(confirmTask.operationId);
+      const isCompleted = confirmTask.state === "completed";
+      const isRecovering = recovering === confirmTask.id;
+
+      return (
+        <div
+          style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setConfirmTask(null); }}
+        >
+          <div style={{ width: 420, backgroundColor: tokens.bgCard, border: `1px solid ${tokens.borderStrong}`, borderRadius: 14, padding: 28 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: tokens.textPrimary, marginBottom: 12 }}>
+              Recover "{confirmTask.title}"?
+            </h2>
+
+            <p style={{ fontSize: 13, color: tokens.textSecondary, lineHeight: 1.6, marginBottom: opWasComplete ? 12 : 0 }}>
+              This task is marked as <span style={{ fontWeight: 600, color: isCompleted ? tokens.stateCompleted : tokens.stateScrapped }}>{isCompleted ? "Completed" : "Scrapped"}</span>.
+              {" "}Recovering it will set it back to <span style={{ fontWeight: 600, color: tokens.stateTodo }}>To-Do</span>.
+            </p>
+
+            {opWasComplete && (
+              <div style={{ backgroundColor: tokens.stateBlocked + "18", border: `1px solid ${tokens.stateBlocked}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 0 }}>
+                <p style={{ fontSize: 12, color: tokens.stateBlocked, lineHeight: 1.6, margin: 0 }}>
+                  <span style={{ fontWeight: 700 }}>"{opName}"</span> is fully complete. Recovering this task will mark the operation as in-progress again.
+                </p>
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+              <button
+                onClick={() => setConfirmTask(null)}
+                style={{ padding: "9px 18px", borderRadius: 8, fontSize: 14, fontWeight: 500, border: `1px solid ${tokens.border}`, color: tokens.textSecondary, backgroundColor: tokens.bgSurface, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={isRecovering}
+                onClick={async () => {
+                  const task = confirmTask;
+                  setConfirmTask(null);
+                  await recover(task);
+                }}
+                style={{
+                  padding: "9px 22px", borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: isRecovering ? "not-allowed" : "pointer",
+                  background: "linear-gradient(145deg, #60a5fa 0%, #2563eb 100%)",
+                  boxShadow: "0 4px 14px rgba(37,99,235,0.4)",
+                  color: "#fff", border: "none", opacity: isRecovering ? 0.6 : 1,
+                }}
+              >
+                {isRecovering ? "Recovering…" : "↩ Recover"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
+    </>
   );
 }

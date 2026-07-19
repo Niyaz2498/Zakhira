@@ -113,6 +113,25 @@ export function addReminder(reminder: Reminder): void {
   notify();
 }
 
+export function logout(): void {
+  LS.del("zakhira_api_key");
+  LS.del("zakhira_display_name");
+  LS.del("zakhira_operations");
+  LS.del("zakhira_tasks");
+  LS.del("zakhira_reminders");
+  LS.del("zakhira_last_synced_at");
+  _store = {
+    ..._store,
+    apiKey: null,
+    displayName: null,
+    operations: [],
+    tasks: [],
+    reminders: [],
+    lastSyncedAt: null,
+  };
+  notify();
+}
+
 export function setDisplayName(name: string): void {
   const trimmed = name.trim() || null;
   if (trimmed) LS.set("zakhira_display_name", trimmed);

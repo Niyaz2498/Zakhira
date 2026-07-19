@@ -11,6 +11,7 @@ import tasksRouter from "./routes/tasks.js";
 import remindersRouter from "./routes/reminders.js";
 import keysRouter from "./routes/keys.js";
 import syncRouter from "./routes/sync.js";
+import adminRouter from "./routes/admin.js";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -102,6 +103,7 @@ app.route("/tasks", tasksRouter);
 app.route("/reminders", remindersRouter);
 app.route("/keys", keysRouter);
 app.route("/sync", syncRouter);
+app.route("/admin", adminRouter);
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 app.get("/health", (c) => c.json({ ok: true, data: { status: "ok" } }));

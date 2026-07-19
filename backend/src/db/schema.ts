@@ -1,10 +1,20 @@
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
 
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 // ─── Operations ──────────────────────────────────────────────────────────────
 
 export const operations = sqliteTable("operations", {
   id: text("id").primaryKey(),
+  userId: text("user_id").references(() => users.id),
   name: text("name").notNull(),
   description: text("description"),
   startDate: text("start_date"),
@@ -53,6 +63,7 @@ export const taskDependencies = sqliteTable("task_dependencies", {
 
 export const reminders = sqliteTable("reminders", {
   id: text("id").primaryKey(),
+  userId: text("user_id").references(() => users.id),
   taskId: text("task_id").references(() => tasks.id),
   title: text("title").notNull(),
   fireHour: integer("fire_hour").notNull(),
@@ -69,6 +80,7 @@ export const reminders = sqliteTable("reminders", {
 
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
+  userId: text("user_id").references(() => users.id),
   keyHash: text("key_hash").notNull().unique(),
   name: text("name").notNull(),
   scope: text("scope", { enum: ["all", "scoped"] }).notNull(),
@@ -90,7 +102,14 @@ export const apiKeyOperations = sqliteTable("api_key_operations", {
 
 // ─── Relations ────────────────────────────────────────────────────────────────
 
-export const operationsRelations = relations(operations, ({ many }) => ({
+export const usersRelations = relations(users, ({ many }) => ({
+  apiKeys: many(apiKeys),
+  operations: many(operations),
+  reminders: many(reminders),
+}));
+
+export const operationsRelations = relations(operations, ({ one, many }) => ({
+  user: one(users, { fields: [operations.userId], references: [users.id] }),
   tasks: many(tasks),
   apiKeyOperations: many(apiKeyOperations),
 }));
@@ -122,13 +141,15 @@ export const taskDependenciesRelations = relations(taskDependencies, ({ one }) =
 }));
 
 export const remindersRelations = relations(reminders, ({ one }) => ({
+  user: one(users, { fields: [reminders.userId], references: [users.id] }),
   task: one(tasks, {
     fields: [reminders.taskId],
     references: [tasks.id],
   }),
 }));
 
-export const apiKeysRelations = relations(apiKeys, ({ many }) => ({
+export const apiKeysRelations = relations(apiKeys, ({ one, many }) => ({
+  user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
   apiKeyOperations: many(apiKeyOperations),
 }));
 
