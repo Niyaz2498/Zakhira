@@ -21,7 +21,7 @@ let _store: AppStore = {
   loaded: false,
   syncing: false,
   apiKey: null,
-  apiUrl: "http://localhost:8788",
+  apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev",
   operations: [],
   tasks: [],
   reminders: [],
@@ -56,7 +56,7 @@ export async function loadFromSecureStore(): Promise<void> {
     loaded: true,
     syncing: !!key, // pre-set so dashboard shows spinner before sync() fires
     apiKey: key,
-    apiUrl: url ?? "http://localhost:8788",
+    apiUrl: url ?? (process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev"),
     lastSyncedAt: lastSync,
   };
   notify();
@@ -122,7 +122,7 @@ export async function logout(): Promise<void> {
     loaded: true,
     syncing: false,
     apiKey: null,
-    apiUrl: "http://localhost:8788",
+    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev",
     operations: [],
     tasks: [],
     reminders: [],

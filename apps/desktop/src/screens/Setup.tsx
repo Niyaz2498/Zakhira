@@ -7,7 +7,7 @@ import type { ColorTokens } from "@zakhira/ui";
 
 export function Setup() {
   const { tokens } = useTheme();
-  const [url, setUrl] = useState("http://localhost:8787");
+  const [url, setUrl] = useState(import.meta.env.VITE_API_URL ?? "https://zakhira-backend.zakhira.workers.dev");
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -79,7 +79,7 @@ export function Setup() {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             style={inputStyle(tokens)}
-            placeholder="http://localhost:8787"
+            placeholder="https://zakhira-backend.zakhira.workers.dev"
           />
         </label>
 

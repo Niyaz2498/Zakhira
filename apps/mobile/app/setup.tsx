@@ -18,7 +18,7 @@ import { ZakhiraClient } from "@zakhira/core";
 export default function SetupScreen() {
   const { tokens } = useTheme();
   const router = useRouter();
-  const [url, setUrl] = useState("http://localhost:8788");
+  const [url, setUrl] = useState(process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev");
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -65,7 +65,7 @@ export default function SetupScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
-            placeholder="http://localhost:8787"
+            placeholder="https://zakhira-backend.zakhira.workers.dev"
             placeholderTextColor={tokens.textTertiary}
           />
 

@@ -10,5 +10,5 @@ port = 8788
 [[d1_databases]]
 binding = "DB"
 database_name = "zakhira-db"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "c7bc3553-af16-4cbe-8882-742c72838afa"
 migrations_dir = "migrations"

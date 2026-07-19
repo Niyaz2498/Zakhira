@@ -31,7 +31,7 @@ export interface AppStore {
 // Synchronously initialize from localStorage — available before first render
 let _store: AppStore = {
   apiKey: LS.get("zakhira_api_key"),
-  apiUrl: LS.get("zakhira_api_url") ?? "http://localhost:8787",
+  apiUrl: LS.get("zakhira_api_url") ?? (import.meta.env.VITE_API_URL ?? "https://zakhira-backend.zakhira.workers.dev"),
   displayName: LS.get("zakhira_display_name"),
   operations: loadCached<Operation>("zakhira_operations"),
   tasks: loadCached<Task>("zakhira_tasks"),
