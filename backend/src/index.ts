@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { drizzle } from "drizzle-orm/d1";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import * as schema from "./db/schema.js";
 import type { Bindings, AppDB } from "./types.js";
-import { generateApiKey, hashKey } from "./utils/crypto.js";
+import { verifyPassword, signJwt } from "./utils/crypto.js";
 import operationsRouter from "./routes/operations.js";
 import tasksRouter from "./routes/tasks.js";
 import remindersRouter from "./routes/reminders.js";
@@ -15,7 +15,7 @@ import adminRouter from "./routes/admin.js";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// ─── CORS (dev convenience) ───────────────────────────────────────────────────
+// ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(
   "*",
   cors({
@@ -25,76 +25,36 @@ app.use(
   })
 );
 
-// ─── Enable FK constraints ────────────────────────────────────────────────────
+// ─── FK constraints ───────────────────────────────────────────────────────────
 app.use("*", async (c, next) => {
   const db = drizzle(c.env.DB, { schema }) as AppDB;
   await db.run(sql`PRAGMA foreign_keys=ON`);
   await next();
 });
 
-// ─── Bootstrap (no auth — only while zero keys exist) ─────────────────────────
-app.post("/bootstrap", async (c) => {
+// ─── POST /auth/login ─────────────────────────────────────────────────────────
+app.post("/auth/login", async (c) => {
+  const body = await c.req.json<{ username?: string; password?: string }>();
+  if (!body.username?.trim() || !body.password) {
+    return c.json({ ok: false, error: "username and password are required" }, 400);
+  }
+
   const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const user = await db.query.users.findFirst({
+    where: eq(schema.users.username, body.username.trim()),
+  });
 
-  // Refuse if any key already exists
-  const existing = await db.query.apiKeys.findFirst();
-  if (existing) {
-    return c.json({ ok: false, error: "Bootstrap endpoint is sealed" }, 403);
+  if (!user || !user.passwordHash) {
+    return c.json({ ok: false, error: "Invalid username or password" }, 401);
   }
 
-  const body = await c.req.json<{
-    name?: string;
-    scope?: "all" | "scoped";
-    operationIds?: string[];
-  }>();
-
-  const plaintext = generateApiKey();
-  const hash = await hashKey(plaintext);
-  const now = new Date().toISOString();
-  const keyId = crypto.randomUUID();
-
-  // Insert General Tasks default operation if it doesn't exist
-  const defaultOp = await db.query.operations.findFirst({
-    where: sql`is_default = 1`,
-  });
-  if (!defaultOp) {
-    await db.insert(schema.operations).values({
-      id: crypto.randomUUID(),
-      name: "General Tasks",
-      description: null,
-      startDate: null,
-      endDate: null,
-      importance: null,
-      isDefault: true,
-      createdAt: now,
-      updatedAt: now,
-    });
+  const ok = await verifyPassword(body.password, user.passwordHash);
+  if (!ok) {
+    return c.json({ ok: false, error: "Invalid username or password" }, 401);
   }
 
-  await db.insert(schema.apiKeys).values({
-    id: keyId,
-    keyHash: hash,
-    name: body.name ?? "Default",
-    scope: "all",
-    lastUsedAt: null,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  return c.json({
-    ok: true,
-    data: {
-      key: {
-        id: keyId,
-        name: body.name ?? "Default",
-        scope: "all",
-        lastUsedAt: null,
-        createdAt: now,
-        updatedAt: now,
-      },
-      plaintext,
-    },
-  });
+  const token = await signJwt(user.id, c.env.JWT_SECRET);
+  return c.json({ ok: true, data: { token, userId: user.id, username: user.username } });
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────

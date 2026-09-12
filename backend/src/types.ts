@@ -4,14 +4,13 @@ import type * as schema from "./db/schema.js";
 export interface Bindings {
   DB: D1Database;
   ADMIN_SECRET: string;
+  JWT_SECRET: string;
 }
 
 export interface AuthContext {
-  keyId: string;
-  userId: string | null;
-  scope: "all" | "scoped";
-  /** null = unrestricted (legacy full-access key). Otherwise the list of operation IDs the key may touch. */
-  allowedOperationIds: string[] | null;
+  userId: string;
+  /** Operation IDs this user may access. Always populated from the user's own operations. */
+  allowedOperationIds: string[];
 }
 
 export type AppDB = DrizzleD1Database<typeof schema>;

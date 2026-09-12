@@ -11,34 +11,37 @@ import {
   ScrollView,
 } from "react-native";
 import { useRouter } from "expo-router";
+
+declare const process: { env: Record<string, string | undefined> };
 import { useTheme } from "../src/theme/ThemeContext";
-import { saveApiKey, sync } from "../src/store";
+import { saveToken, sync } from "../src/store";
 import { ZakhiraClient } from "@zakhira/core";
 
 export default function SetupScreen() {
   const { tokens } = useTheme();
   const router = useRouter();
-  const [url, setUrl] = useState(process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev");
-  const [apiKey, setApiKey] = useState("");
+  const url = process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev";
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   const s = makeStyles(tokens);
 
   async function handleSave() {
-    if (!apiKey.trim() || !url.trim()) {
-      Alert.alert("Missing fields", "Please enter both the server URL and your API key.");
+    if (!username.trim() || !password || !url.trim()) {
+      Alert.alert("Missing fields", "Please enter your username, password, and server URL.");
       return;
     }
     setLoading(true);
     try {
-      const client = new ZakhiraClient(url.trim(), apiKey.trim());
-      const res = await client.listOperations();
+      const client = new ZakhiraClient(url.trim(), "");
+      const res = await client.login(username.trim(), password);
       if (!res.ok) {
-        Alert.alert("Connection failed", res.error ?? "Check your API key and URL.");
+        Alert.alert("Login failed", res.error ?? "Invalid username or password.");
         return;
       }
-      await saveApiKey(apiKey.trim(), url.trim());
-      sync(); // fire-and-forget so dashboard has data immediately
+      await saveToken(res.data.token, url.trim());
+      sync(); // fire-and-forget full sync on first login
       router.replace("/(tabs)/");
     } catch {
       Alert.alert("Connection failed", "Could not reach the server. Check the URL.");
@@ -57,27 +60,26 @@ export default function SetupScreen() {
         <Text style={s.subtitle}>Your personal quest log</Text>
 
         <View style={s.card}>
-          <Text style={s.label}>Server URL</Text>
+          <Text style={s.label}>Username</Text>
           <TextInput
             style={s.input}
-            value={url}
-            onChangeText={setUrl}
+            value={username}
+            onChangeText={setUsername}
             autoCapitalize="none"
             autoCorrect={false}
-            keyboardType="url"
-            placeholder="https://zakhira-backend.zakhira.workers.dev"
+            placeholder="your username"
             placeholderTextColor={tokens.textTertiary}
           />
 
-          <Text style={[s.label, { marginTop: 16 }]}>API Key</Text>
+          <Text style={[s.label, { marginTop: 16 }]}>Password</Text>
           <TextInput
-            style={[s.input, s.mono]}
-            value={apiKey}
-            onChangeText={setApiKey}
+            style={s.input}
+            value={password}
+            onChangeText={setPassword}
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
-            placeholder="Paste your key here"
+            placeholder="your password"
             placeholderTextColor={tokens.textTertiary}
           />
         </View>
@@ -87,7 +89,7 @@ export default function SetupScreen() {
           onPress={handleSave}
           disabled={loading}
         >
-          <Text style={s.buttonText}>{loading ? "Connecting…" : "Connect"}</Text>
+          <Text style={s.buttonText}>{loading ? "Connecting…" : "Sign In"}</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -129,7 +131,6 @@ function makeStyles(tokens: any) {
       color: tokens.textPrimary,
       fontSize: 14,
     },
-    mono: { fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
     button: {
       backgroundColor: tokens.accent,
       borderRadius: 10,

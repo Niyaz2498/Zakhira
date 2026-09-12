@@ -78,6 +78,7 @@ app.get("/", async (c) => {
     importance: r.importance,
     notes: r.notes,
     timeLogged: r.timeLogged ?? 0,
+    timerStartedAt: r.timerStartedAt ?? null,
     reminderId: r.reminderId,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,

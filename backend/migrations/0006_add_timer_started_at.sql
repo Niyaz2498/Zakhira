@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN timer_started_at TEXT DEFAULT NULL;

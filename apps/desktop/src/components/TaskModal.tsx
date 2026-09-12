@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { CSSProperties } from "react";
-import { getClient, getStore, updateTaskInStore } from "../store";
+import { getClient, updateTaskInStore } from "../store";
 import { useStore } from "../store/useStore";
 import { canComplete, blockingPrerequisites } from "@zakhira/core";
 import { DateInput } from "./FormControls";
@@ -301,47 +301,36 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
   const [editEndDate, setEditEndDate] = useState(task.endDate ?? "");
 
   // ── Timer ────────────────────────────────────────────────────────────────────
-  const [timerRunning, setTimerRunning] = useState(false);
-  const [sessionSeconds, setSessionSeconds] = useState(0);
-  // Locks the display during async save so there's no flash to 0
-  const [lockedTotal, setLockedTotal] = useState<number | null>(null);
-  const sessionStartRef = useRef<number | null>(null);
-  const intervalRef = useRef<number | null>(null);
+  // Timer running state is derived from ct.timerStartedAt (server-side).
+  // This makes the timer cross-device: opening on another device shows the running timer.
+  const [liveElapsed, setLiveElapsed] = useState(0);
 
-  const displaySeconds = lockedTotal !== null ? lockedTotal : ct.timeLogged + sessionSeconds;
-
-  function handleTimerStart() {
-    if (timerRunning) return;
-    sessionStartRef.current = Date.now() - sessionSeconds * 1000;
-    setTimerRunning(true);
-    intervalRef.current = window.setInterval(() => {
-      setSessionSeconds(Math.floor((Date.now() - sessionStartRef.current!) / 1000));
+  useEffect(() => {
+    if (!ct.timerStartedAt) { setLiveElapsed(0); return; }
+    const startMs = new Date(ct.timerStartedAt).getTime();
+    setLiveElapsed(Math.floor((Date.now() - startMs) / 1000));
+    const id = window.setInterval(() => {
+      setLiveElapsed(Math.floor((Date.now() - startMs) / 1000));
     }, 1000);
+    return () => window.clearInterval(id);
+  }, [ct.timerStartedAt]);
+
+  const timerRunning = ct.timerStartedAt != null;
+  const displaySeconds = ct.timeLogged + liveElapsed;
+
+  async function handleTimerStart() {
+    await updateField({ timerStartedAt: new Date().toISOString() });
   }
 
   const handleTimerStop = useCallback(async () => {
-    if (!timerRunning) return;
-    window.clearInterval(intervalRef.current!);
-    setTimerRunning(false);
-    const total = ct.timeLogged + sessionSeconds;
-    setLockedTotal(total); // freeze display during save
-    setSessionSeconds(0);
-    await updateField({ timeLogged: total });
-    setLockedTotal(null); // release — ct.timeLogged is now total
-  }, [timerRunning, ct.timeLogged, sessionSeconds]);
+    if (!ct.timerStartedAt) return;
+    const elapsed = Math.floor((Date.now() - new Date(ct.timerStartedAt).getTime()) / 1000);
+    await updateField({ timeLogged: ct.timeLogged + elapsed, timerStartedAt: null });
+  }, [ct.timerStartedAt, ct.timeLogged]);
 
   async function handleTimerReset() {
-    window.clearInterval(intervalRef.current!);
-    setTimerRunning(false);
-    setSessionSeconds(0);
-    setLockedTotal(null);
-    sessionStartRef.current = null;
-    await updateField({ timeLogged: 0 });
+    await updateField({ timeLogged: 0, timerStartedAt: null });
   }
-
-  useEffect(() => {
-    return () => { if (intervalRef.current) window.clearInterval(intervalRef.current); };
-  }, []);
 
   const isDone = ct.state === "completed" || ct.state === "scrapped";
   const blocking = blockingPrerequisites(ct, allTasksInOp);
@@ -368,10 +357,7 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
     try {
       const client = getClient();
       if (!client) throw new Error("Not connected");
-      const store = getStore();
-      console.log("[updateField] PATCH", `${store.apiUrl}/tasks/${ct.id}`, fields);
       const res = await client.updateTask(ct.id, fields);
-      console.log("[updateField] response ok:", res.ok, res);
       if (!res.ok) { setError(res.error); return; }
       setCt(res.data);
       updateTaskInStore(res.data);

@@ -48,6 +48,7 @@ export interface Task {
   importance: number | null;
   notes: string | null;
   timeLogged: number;
+  timerStartedAt: string | null;
   reminderId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -77,6 +78,7 @@ export interface UpdateTaskInput {
   importance?: number | null;
   notes?: string | null;
   timeLogged?: number;
+  timerStartedAt?: string | null;
   prerequisites?: string[];
 }
 
@@ -153,6 +155,14 @@ export interface ApiError {
 }
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+export interface LoginResponse {
+  token: string;
+  userId: string;
+  username: string;
+}
 
 // ─── Operation stats ─────────────────────────────────────────────────────────
 

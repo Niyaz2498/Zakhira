@@ -23,7 +23,7 @@ function Shell() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!store.apiKey) return <Setup />;
+  if (!store.token) return <Setup />;
 
   const navItems: { key: Screen; label: string; icon: string }[] = [
     { key: "dashboard", label: "Dashboard", icon: "⊞" },

@@ -30,9 +30,7 @@ app.get("/", async (c) => {
   const db = drizzle(c.env.DB, { schema });
   let rows = await db.query.operations.findMany();
 
-  if (auth.allowedOperationIds) {
-    rows = rows.filter((r) => auth.allowedOperationIds!.includes(r.id));
-  }
+  rows = rows.filter((r) => auth.allowedOperationIds.includes(r.id));
 
   return c.json({ ok: true, data: rows.map(toOperation) });
 });
@@ -52,9 +50,6 @@ app.get("/:id", async (c) => {
 // POST /operations
 app.post("/", async (c) => {
   const auth = c.get("auth");
-  if (auth.scope === "scoped") {
-    return c.json({ ok: false, error: "Scoped keys cannot create operations" }, 403);
-  }
   const body = await c.req.json<{
     name: string;
     description?: string;
@@ -121,9 +116,6 @@ app.patch("/:id", async (c) => {
 // DELETE /operations/:id
 app.delete("/:id", async (c) => {
   const auth = c.get("auth");
-  if (auth.scope === "scoped") {
-    return c.json({ ok: false, error: "Scoped keys cannot delete operations" }, 403);
-  }
   const db = drizzle(c.env.DB, { schema });
   const id = c.req.param("id");
   const row = await db.query.operations.findFirst({ where: eq(schema.operations.id, id) });
@@ -181,9 +173,6 @@ app.delete("/:id", async (c) => {
     }
   }
 
-  await db
-    .delete(schema.apiKeyOperations)
-    .where(eq(schema.apiKeyOperations.operationId, id));
   await db.delete(schema.operations).where(eq(schema.operations.id, id));
 
   return c.json({ ok: true, data: { deleted: true } });

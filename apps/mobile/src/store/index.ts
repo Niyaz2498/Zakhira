@@ -1,15 +1,17 @@
 import * as SecureStore from "expo-secure-store";
+
+declare const process: { env: Record<string, string | undefined> };
 import { ZakhiraClient } from "@zakhira/core";
 import type { Operation, Task, Reminder } from "@zakhira/core";
 
-const API_KEY_STORE = "zakhira_api_key";
+const TOKEN_STORE = "zakhira_token";
 const API_URL_STORE = "zakhira_api_url";
 const LAST_SYNC_STORE = "zakhira_last_sync";
 
 export interface AppStore {
   loaded: boolean;
   syncing: boolean;
-  apiKey: string | null;
+  token: string | null;
   apiUrl: string;
   operations: Operation[];
   tasks: Task[];
@@ -20,7 +22,7 @@ export interface AppStore {
 let _store: AppStore = {
   loaded: false,
   syncing: false,
-  apiKey: null,
+  token: null,
   apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev",
   operations: [],
   tasks: [],
@@ -46,36 +48,40 @@ export function subscribe(listener: (store: AppStore) => void) {
 }
 
 export async function loadFromSecureStore(): Promise<void> {
-  const [key, url, lastSync] = await Promise.all([
-    SecureStore.getItemAsync(API_KEY_STORE),
+  const [token, url, lastSync] = await Promise.all([
+    SecureStore.getItemAsync(TOKEN_STORE),
     SecureStore.getItemAsync(API_URL_STORE),
     SecureStore.getItemAsync(LAST_SYNC_STORE),
   ]);
   _store = {
     ..._store,
     loaded: true,
-    syncing: !!key, // pre-set so dashboard shows spinner before sync() fires
-    apiKey: key,
+    syncing: !!token,
+    token,
     apiUrl: url ?? (process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev"),
     lastSyncedAt: lastSync,
   };
   notify();
 }
 
-export async function saveApiKey(key: string, url: string): Promise<void> {
-  await SecureStore.setItemAsync(API_KEY_STORE, key);
+export async function saveToken(token: string, url: string): Promise<void> {
+  await SecureStore.setItemAsync(TOKEN_STORE, token);
   await SecureStore.setItemAsync(API_URL_STORE, url);
-  _store = { ..._store, apiKey: key, apiUrl: url };
+  _store = { ..._store, token, apiUrl: url };
   notify();
 }
 
 export async function sync(): Promise<void> {
-  if (!_store.apiKey) return;
+  if (!_store.token) return;
   _store = { ..._store, syncing: true };
   notify();
   try {
-    const client = new ZakhiraClient(_store.apiUrl, _store.apiKey);
-    const res = await client.sync(_store.lastSyncedAt ?? undefined);
+    const client = new ZakhiraClient(_store.apiUrl, _store.token!);
+    // On cold start (empty store), always do a full sync to get all data.
+    // On foreground syncs, use delta to get only changes.
+    const isEmpty = _store.tasks.length === 0 && _store.operations.length === 0;
+    const since = isEmpty ? undefined : (_store.lastSyncedAt ?? undefined);
+    const res = await client.sync(since);
     if (!res.ok) {
       console.warn("[sync] server error:", res.error);
       return;
@@ -114,14 +120,14 @@ export async function sync(): Promise<void> {
 
 export async function logout(): Promise<void> {
   await Promise.all([
-    SecureStore.deleteItemAsync(API_KEY_STORE),
+    SecureStore.deleteItemAsync(TOKEN_STORE),
     SecureStore.deleteItemAsync(API_URL_STORE),
     SecureStore.deleteItemAsync(LAST_SYNC_STORE),
   ]);
   _store = {
     loaded: true,
     syncing: false,
-    apiKey: null,
+    token: null,
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev",
     operations: [],
     tasks: [],
@@ -132,8 +138,8 @@ export async function logout(): Promise<void> {
 }
 
 export function getClient(): ZakhiraClient | null {
-  if (!_store.apiKey) return null;
-  return new ZakhiraClient(_store.apiUrl, _store.apiKey);
+  if (!_store.token) return null;
+  return new ZakhiraClient(_store.apiUrl, _store.token);
 }
 
 export function updateTaskInStore(updated: Task): void {
@@ -150,3 +156,4 @@ export function addOperationToStore(op: Operation): void {
   _store = { ..._store, operations: [..._store.operations, op] };
   notify();
 }
+

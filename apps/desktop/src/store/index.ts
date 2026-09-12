@@ -19,7 +19,7 @@ function saveCached<T>(key: string, items: T[]): void {
 }
 
 export interface AppStore {
-  apiKey: string | null;
+  token: string | null;
   apiUrl: string;
   displayName: string | null;
   operations: Operation[];
@@ -30,7 +30,7 @@ export interface AppStore {
 
 // Synchronously initialize from localStorage — available before first render
 let _store: AppStore = {
-  apiKey: LS.get("zakhira_api_key"),
+  token: LS.get("zakhira_token"),
   apiUrl: LS.get("zakhira_api_url") ?? (import.meta.env.VITE_API_URL ?? "https://zakhira-backend.zakhira.workers.dev"),
   displayName: LS.get("zakhira_display_name"),
   operations: loadCached<Operation>("zakhira_operations"),
@@ -55,17 +55,17 @@ export function subscribe(listener: (store: AppStore) => void) {
 /** No-op — kept for call-site compatibility; state loads at module init. */
 export function loadFromStore(): void { notify(); }
 
-export function saveCredentials(apiKey: string, apiUrl: string): void {
-  LS.set("zakhira_api_key", apiKey);
+export function saveToken(token: string, apiUrl: string): void {
+  LS.set("zakhira_token", token);
   LS.set("zakhira_api_url", apiUrl);
-  _store = { ..._store, apiKey, apiUrl };
+  _store = { ..._store, token, apiUrl };
   notify();
 }
 
 export async function sync(): Promise<void> {
-  if (!_store.apiKey) return;
+  if (!_store.token) return;
   try {
-    const client = new ZakhiraClient(_store.apiUrl, _store.apiKey);
+    const client = new ZakhiraClient(_store.apiUrl, _store.token);
     // Always full sync — avoids delta-sync gaps when in-memory store is stale/empty
     const res = await client.sync(undefined);
     if (!res.ok) return;
@@ -88,8 +88,8 @@ export async function sync(): Promise<void> {
 }
 
 export function getClient(): ZakhiraClient | null {
-  if (!_store.apiKey) return null;
-  return new ZakhiraClient(_store.apiUrl, _store.apiKey);
+  if (!_store.token) return null;
+  return new ZakhiraClient(_store.apiUrl, _store.token);
 }
 
 export function addTask(task: Task): void {
@@ -114,7 +114,7 @@ export function addReminder(reminder: Reminder): void {
 }
 
 export function logout(): void {
-  LS.del("zakhira_api_key");
+  LS.del("zakhira_token");
   LS.del("zakhira_display_name");
   LS.del("zakhira_operations");
   LS.del("zakhira_tasks");
@@ -122,7 +122,7 @@ export function logout(): void {
   LS.del("zakhira_last_synced_at");
   _store = {
     ..._store,
-    apiKey: null,
+    token: null,
     displayName: null,
     operations: [],
     tasks: [],

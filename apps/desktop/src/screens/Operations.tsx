@@ -5,7 +5,8 @@ import { useStore } from "../store/useStore";
 import { getClient, addOperation } from "../store";
 import { computeOperationStats } from "@zakhira/core";
 import { DateInput } from "../components/FormControls";
-import type { Operation } from "@zakhira/core";
+import { TaskModal } from "../components/TaskModal";
+import type { Operation, Task } from "@zakhira/core";
 import type { ColorTokens } from "@zakhira/ui";
 
 type Priority = "low" | "medium" | "high";
@@ -124,14 +125,126 @@ function CreateOperationModal({ tokens, onClose }: { tokens: ColorTokens; onClos
   );
 }
 
+const STATE_COLOR: Record<string, string> = {
+  todo: "#a4a8b0",
+  in_progress: "#5aa9f0",
+  blocked: "#e3a857",
+  completed: "#4caf7d",
+  scrapped: "#888",
+};
+
+function OperationTasksPanel({
+  op,
+  tasks,
+  tokens,
+  onClose,
+}: {
+  op: Operation;
+  tasks: Task[];
+  tokens: ColorTokens;
+  onClose: () => void;
+}) {
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const opTasks = tasks.filter((t) => t.operationId === op.id);
+  const active = opTasks.filter((t) => t.state !== "completed" && t.state !== "scrapped");
+  const done = opTasks.filter((t) => t.state === "completed" || t.state === "scrapped");
+
+  return (
+    <>
+      <div
+        style={{
+          position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.45)", zIndex: 90,
+        }}
+        onClick={onClose}
+      />
+      <div
+        style={{
+          position: "fixed", top: 0, right: 0, bottom: 0, width: 480,
+          backgroundColor: tokens.bgCard, borderLeft: `1px solid ${tokens.border}`,
+          zIndex: 91, display: "flex", flexDirection: "column", overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: "18px 22px 14px", borderBottom: `1px solid ${tokens.border}`, flexShrink: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: tokens.textPrimary }}>{op.name}</div>
+              {op.description && (
+                <div style={{ fontSize: 13, color: tokens.textSecondary, marginTop: 2 }}>{op.description}</div>
+              )}
+            </div>
+            <button onClick={onClose} style={{ color: tokens.textTertiary, fontSize: 22, cursor: "pointer", lineHeight: 1, marginLeft: 12 }}>×</button>
+          </div>
+          <div style={{ fontSize: 12, color: tokens.textTertiary, marginTop: 8 }}>
+            {active.length} active · {done.length} done · {opTasks.length} total
+          </div>
+        </div>
+
+        {/* Task list */}
+        <div style={{ flex: 1, overflow: "auto", padding: "12px 22px" }}>
+          {opTasks.length === 0 && (
+            <div style={{ textAlign: "center", marginTop: 48, color: tokens.textTertiary, fontSize: 14 }}>
+              No tasks in this operation yet.
+            </div>
+          )}
+          {opTasks.map((t) => (
+            <div
+              key={t.id}
+              onClick={() => setSelectedTask(t)}
+              style={{
+                padding: "10px 14px", marginBottom: 8,
+                backgroundColor: tokens.bgSurface,
+                border: `1px solid ${tokens.border}`,
+                borderRadius: 10, cursor: "pointer",
+                transition: "border-color 0.12s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.borderColor = tokens.accent)}
+              onMouseLeave={(e) => (e.currentTarget.style.borderColor = tokens.border)}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 14, fontWeight: 500, color: tokens.textPrimary }}>{t.title}</div>
+                <span style={{
+                  fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10,
+                  color: STATE_COLOR[t.state] ?? tokens.textTertiary,
+                  backgroundColor: (STATE_COLOR[t.state] ?? tokens.textTertiary) + "22",
+                  textTransform: "capitalize", whiteSpace: "nowrap",
+                }}>
+                  {t.state.replace("_", " ")}
+                </span>
+              </div>
+              {t.notes && (
+                <div style={{ fontSize: 12, color: tokens.textSecondary, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {t.notes}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {selectedTask && (
+        <TaskModal
+          task={selectedTask}
+          allTasksInOp={opTasks}
+          opName={op.name}
+          tokens={tokens}
+          onClose={() => setSelectedTask(null)}
+        />
+      )}
+    </>
+  );
+}
+
 function OperationCard({
   op,
   tasks,
   tokens,
+  onClick,
 }: {
   op: Operation;
-  tasks: ReturnType<typeof useStore>["tasks"];
+  tasks: Task[];
   tokens: ColorTokens;
+  onClick: () => void;
 }) {
   const opTasks = tasks.filter((t) => t.operationId === op.id);
   const stats = computeOperationStats(opTasks);
@@ -140,11 +253,14 @@ function OperationCard({
 
   return (
     <div
+      onClick={onClick}
       style={{
         backgroundColor: tokens.bgCard, border: `1px solid ${tokens.border}`,
         borderRadius: 12, padding: "16px 18px", cursor: "pointer",
         marginBottom: 10, transition: "border-color 0.12s",
       }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = tokens.accent)}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = tokens.border)}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
@@ -207,6 +323,7 @@ export function Operations() {
   const { tokens } = useTheme();
   const store = useStore();
   const [showCreate, setShowCreate] = useState(false);
+  const [selectedOp, setSelectedOp] = useState<Operation | null>(null);
 
   const sorted = useMemo(() => {
     const defaults = store.operations.filter((o) => o.isDefault);
@@ -244,13 +361,28 @@ export function Operations() {
             </div>
           )}
           {sorted.map((op) => (
-            <OperationCard key={op.id} op={op} tasks={store.tasks} tokens={tokens} />
+            <OperationCard
+              key={op.id}
+              op={op}
+              tasks={store.tasks}
+              tokens={tokens}
+              onClick={() => setSelectedOp(op)}
+            />
           ))}
         </div>
       </div>
 
       {showCreate && (
         <CreateOperationModal tokens={tokens} onClose={() => setShowCreate(false)} />
+      )}
+
+      {selectedOp && (
+        <OperationTasksPanel
+          op={selectedOp}
+          tasks={store.tasks}
+          tokens={tokens}
+          onClose={() => setSelectedOp(null)}
+        />
       )}
     </>
   );
