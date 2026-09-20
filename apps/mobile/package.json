@@ -7,7 +7,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .expo dist"
+    "clean": "rm -rf .expo dist",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
