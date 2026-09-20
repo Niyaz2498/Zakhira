@@ -44,6 +44,15 @@ function isThisMonth(iso: string): boolean {
   const d = new Date(iso), n = new Date();
   return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth();
 }
+function formatHours(seconds: number): string {
+  if (seconds === 0) return "0h";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 function isOverdue(task: Task): boolean {
   if (!task.endDate || task.state === "completed" || task.state === "scrapped") return false;
   return task.endDate < new Date().toISOString().slice(0, 10);
@@ -439,6 +448,20 @@ export function Dashboard() {
       .filter((g) => g.tasks.length > 0);
   }, [groupBy, activeTasks, store.operations]);
 
+  const timeStats = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const weekAgoStr = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const monthStartStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const withTime = store.tasks.filter((t) => t.timeLogged > 0);
+    return {
+      today: withTime.filter((t) => t.updatedAt.slice(0, 10) === todayStr).reduce((s, t) => s + t.timeLogged, 0),
+      week:  withTime.filter((t) => t.updatedAt.slice(0, 10) >= weekAgoStr).reduce((s, t) => s + t.timeLogged, 0),
+      month: withTime.filter((t) => t.updatedAt.slice(0, 10) >= monthStartStr).reduce((s, t) => s + t.timeLogged, 0),
+      all:   withTime.reduce((s, t) => s + t.timeLogged, 0),
+    };
+  }, [store.tasks]);
+
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   const totalTasks = store.tasks.length;
 
@@ -557,6 +580,37 @@ export function Dashboard() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* ── Time tracked ──────────────────────────────────────────────────── */}
+        <div style={{ padding: "0 24px 14px", flexShrink: 0, borderBottom: `1px solid ${tokens.border}` }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: tokens.textTertiary, textTransform: "uppercase", letterSpacing: "0.07em", margin: "14px 0 8px" }}>
+            Time Tracked
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+            {([
+              { label: "Today",      value: timeStats.today, color: "#3b82f6", icon: "◷" },
+              { label: "This Week",  value: timeStats.week,  color: "#8b5cf6", icon: "📅" },
+              { label: "This Month", value: timeStats.month, color: "#06b6d4", icon: "🗓" },
+              { label: "All Time",   value: timeStats.all,   color: "#f59e0b", icon: "⏱" },
+            ] as const).map(({ label, value, color, icon }) => (
+              <div key={label} style={{
+                borderRadius: 12, padding: "12px 16px 12px 20px",
+                position: "relative", overflow: "hidden",
+                background: `linear-gradient(135deg, ${tokens.bgCard} 55%, ${color}1a 100%)`,
+                border: `1px solid ${tokens.border}`,
+              }}>
+                <div style={{ position: "absolute", top: 0, left: 0, width: 4, height: "100%", backgroundColor: color, borderRadius: "12px 0 0 12px", boxShadow: `0 0 12px ${color}88` }} />
+                <div style={{ fontSize: 10, fontWeight: 600, color: tokens.textTertiary, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ color, fontSize: 11 }}>{icon}</span>
+                  {label}
+                </div>
+                <div style={{ fontSize: 26, fontWeight: 800, color: value > 0 ? tokens.textPrimary : tokens.textTertiary, lineHeight: 1, letterSpacing: "-0.03em", fontFamily: "system-ui, sans-serif" }}>
+                  {formatHours(value)}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 

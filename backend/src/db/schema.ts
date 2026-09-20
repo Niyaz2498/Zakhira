@@ -6,6 +6,8 @@ import { relations } from "drizzle-orm";
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
+  username: text("username").notNull().default(""),
+  passwordHash: text("password_hash").notNull().default(""),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
@@ -44,6 +46,7 @@ export const tasks = sqliteTable("tasks", {
   importance: integer("importance"),
   notes: text("notes"),
   timeLogged: integer("time_logged").notNull().default(0),
+  timerStartedAt: text("timer_started_at"),
   reminderId: text("reminder_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

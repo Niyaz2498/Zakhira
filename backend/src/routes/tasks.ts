@@ -41,6 +41,7 @@ function rowToTask(
     importance: row.importance,
     notes: row.notes,
     timeLogged: row.timeLogged ?? 0,
+    timerStartedAt: row.timerStartedAt ?? null,
     reminderId: row.reminderId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -77,7 +78,7 @@ app.get("/", async (c) => {
   } else {
     rows = await db.query.tasks.findMany();
     if (auth.allowedOperationIds) {
-      rows = rows.filter((r) => auth.allowedOperationIds!.includes(r.operationId));
+      rows = rows.filter((r) => auth.allowedOperationIds.includes(r.operationId));
     }
   }
 
@@ -188,15 +189,20 @@ app.patch("/:id", async (c) => {
     importance?: number | null;
     notes?: string | null;
     timeLogged?: number;
+    timerStartedAt?: string | null;
     prerequisites?: string[];
   }>();
 
   if (existing.state === "completed" || existing.state === "scrapped") {
-    // Only allow recovery (state → todo), no other edits
+    // Allow: recovery (state → todo) OR timer stop (timerStartedAt → null + timeLogged)
     const isRecovery = body.state === "todo" && !body.title && !body.operationId
       && !body.type && !("startDate" in body) && !("endDate" in body)
       && !("importance" in body) && !("notes" in body) && !body.prerequisites;
-    if (!isRecovery) {
+    const isTimerStop = "timerStartedAt" in body && body.timerStartedAt === null
+      && !body.title && !body.operationId && !body.type && !body.state
+      && !("startDate" in body) && !("endDate" in body) && !("importance" in body)
+      && !("notes" in body) && !body.prerequisites;
+    if (!isRecovery && !isTimerStop) {
       return c.json({ ok: false, error: "Cannot edit a completed or scrapped task" }, 400);
     }
   }
@@ -252,6 +258,7 @@ app.patch("/:id", async (c) => {
       importance: "importance" in body ? (body.importance ?? null) : existing.importance,
       notes: "notes" in body ? (body.notes ?? null) : existing.notes,
       timeLogged: "timeLogged" in body ? (body.timeLogged ?? 0) : (existing.timeLogged ?? 0),
+      timerStartedAt: "timerStartedAt" in body ? (body.timerStartedAt ?? null) : (existing.timerStartedAt ?? null),
       updatedAt: now,
     })
     .where(eq(schema.tasks.id, id));

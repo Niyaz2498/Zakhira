@@ -12,6 +12,7 @@ import type {
   ApiKey,
   CreateApiKeyInput,
   DeltaSyncResponse,
+  LoginResponse,
 } from "./types.js";
 
 export class ZakhiraClient {
@@ -34,7 +35,7 @@ export class ZakhiraClient {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body !== undefined ? JSON.stringify(body) : null,
     });
     return res.json() as Promise<ApiResponse<T>>;
   }
@@ -121,6 +122,17 @@ export class ZakhiraClient {
 
   revokeApiKey(id: string): Promise<ApiResponse<{ revoked: true }>> {
     return this.request("DELETE", `/keys/${id}`);
+  }
+
+  // ─── Auth ──────────────────────────────────────────────────────────────────
+
+  /** Login with username + password. Returns a JWT on success. No auth header required. */
+  login(username: string, password: string): Promise<ApiResponse<LoginResponse>> {
+    return fetch(`${this.baseUrl}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    }).then((r) => r.json()) as Promise<ApiResponse<LoginResponse>>;
   }
 
   // ─── Bootstrap (no auth — only while 0 keys exist) ─────────────────────────

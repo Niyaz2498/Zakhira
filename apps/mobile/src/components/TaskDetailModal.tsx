@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Modal,
   View,
@@ -43,99 +43,116 @@ interface Props {
 }
 
 export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }: Props) {
+  const [ct, setCt] = useState<Task | null>(task);
   const [saving, setSaving] = useState(false);
-  const [timerRunning, setTimerRunning] = useState(false);
-  const [sessionSeconds, setSessionSeconds] = useState(0);
-  const [lockedTotal, setLockedTotal] = useState<number | null>(null);
-  const sessionStartRef = useRef<number>(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Live elapsed seconds computed from ct.timerStartedAt
+  const [liveElapsed, setLiveElapsed] = useState(0);
 
+  // Keep ct in sync when the outer task prop changes (e.g. new task opened)
   useEffect(() => {
-    if (task) {
-      setTimerRunning(false);
-      setSessionSeconds(0);
-      setLockedTotal(null);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    }
+    setCt(task);
   }, [task?.id]);
 
+  // Drive the live counter from server-side timerStartedAt
   useEffect(() => {
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
-
-  const handleTimerStart = useCallback(() => {
-    sessionStartRef.current = Date.now() - sessionSeconds * 1000;
-    intervalRef.current = setInterval(() => {
-      setSessionSeconds(Math.floor((Date.now() - sessionStartRef.current) / 1000));
+    if (!ct?.timerStartedAt) {
+      setLiveElapsed(0);
+      return;
+    }
+    const startMs = new Date(ct.timerStartedAt).getTime();
+    setLiveElapsed(Math.floor((Date.now() - startMs) / 1000));
+    const id = setInterval(() => {
+      setLiveElapsed(Math.floor((Date.now() - startMs) / 1000));
     }, 1000);
-    setTimerRunning(true);
-  }, [sessionSeconds]);
+    return () => clearInterval(id);
+  }, [ct?.timerStartedAt]);
 
-  const handleTimerStop = useCallback(async () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    setTimerRunning(false);
-    if (!task) return;
-    const elapsed = sessionSeconds;
-    const total = (task.timeLogged ?? 0) + elapsed;
-    setLockedTotal(total); // freeze display during save
-    setSessionSeconds(0);  // reset session so next start is fresh
+  const timerRunning = ct?.timerStartedAt != null;
+  const displaySeconds = (ct?.timeLogged ?? 0) + liveElapsed;
+
+  const handleTimerStart = useCallback(async () => {
+    if (!ct) return;
     setSaving(true);
     try {
       const client = getClient();
       if (!client) return;
-      const res = await client.updateTask(task.id, { timeLogged: total });
-      if (res.ok) { updateTaskInStore(res.data); onTaskUpdated(res.data); }
+      const res = await client.updateTask(ct.id, { timerStartedAt: new Date().toISOString() });
+      if (res.ok) {
+        setCt(res.data);
+        updateTaskInStore(res.data);
+        onTaskUpdated(res.data);
+      }
     } finally {
       setSaving(false);
-      setLockedTotal(null); // release — task.timeLogged now reflects total
     }
-  }, [task, sessionSeconds, onTaskUpdated]);
+  }, [ct, onTaskUpdated]);
+
+  const handleTimerStop = useCallback(async () => {
+    if (!ct?.timerStartedAt) return;
+    const elapsed = Math.floor((Date.now() - new Date(ct.timerStartedAt).getTime()) / 1000);
+    const total = ct.timeLogged + elapsed;
+    setSaving(true);
+    try {
+      const client = getClient();
+      if (!client) return;
+      const res = await client.updateTask(ct.id, { timeLogged: total, timerStartedAt: null });
+      if (res.ok) {
+        setCt(res.data);
+        updateTaskInStore(res.data);
+        onTaskUpdated(res.data);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, [ct, onTaskUpdated]);
 
   const handleTimerReset = useCallback(() => {
+    if (!ct) return;
     Alert.alert("Reset timer?", "This will clear all logged time for this task.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Reset",
         style: "destructive",
         onPress: async () => {
-          if (intervalRef.current) clearInterval(intervalRef.current);
-          setTimerRunning(false);
-          setSessionSeconds(0);
-          setLockedTotal(0);
-          if (!task) return;
           setSaving(true);
           try {
             const client = getClient();
             if (!client) return;
-            const res = await client.updateTask(task.id, { timeLogged: 0 });
-            if (res.ok) { updateTaskInStore(res.data); onTaskUpdated(res.data); }
+            const res = await client.updateTask(ct.id, { timeLogged: 0, timerStartedAt: null });
+            if (res.ok) {
+              setCt(res.data);
+              updateTaskInStore(res.data);
+              onTaskUpdated(res.data);
+            }
           } finally {
             setSaving(false);
-            setLockedTotal(null);
           }
         },
       },
     ]);
-  }, [task, onTaskUpdated]);
+  }, [ct, onTaskUpdated]);
 
   const handleStateChange = useCallback(async (newState: TaskState) => {
-    if (!task || newState === task.state) return;
+    if (!ct || newState === ct.state) return;
     setSaving(true);
     try {
       const client = getClient();
       if (!client) return;
-      const res = await client.updateTask(task.id, { state: newState });
-      if (res.ok) { updateTaskInStore(res.data); onTaskUpdated(res.data); }
+      const res = await client.updateTask(ct.id, { state: newState });
+      if (res.ok) {
+        setCt(res.data);
+        updateTaskInStore(res.data);
+        onTaskUpdated(res.data);
+      }
     } finally { setSaving(false); }
-  }, [task, onTaskUpdated]);
+  }, [ct, onTaskUpdated]);
 
-  const isDone = task ? (task.state === "completed" || task.state === "scrapped") : false;
-  const displaySeconds = lockedTotal !== null ? lockedTotal : (task?.timeLogged ?? 0) + sessionSeconds;
-  const priorityColor = task?.importance != null ? PRIORITY_COLOR[task.importance] : null;
-  const tierColor = task
-    ? (task.type === "main" ? tokens.tierMain : task.type === "side" ? tokens.tierSide : tokens.tierExplore)
+  const isDone = ct ? (ct.state === "completed" || ct.state === "scrapped") : false;
+  const priorityColor = ct?.importance != null ? PRIORITY_COLOR[ct.importance] : null;
+  const tierColor = ct
+    ? (ct.type === "main" ? tokens.tierMain : ct.type === "side" ? tokens.tierSide : tokens.tierExplore)
     : tokens.accent;
-  const currentState = task ? STATE_OPTIONS.find((s) => s.key === task.state) : null;
+  const currentState = ct ? STATE_OPTIONS.find((s) => s.key === ct.state) : null;
 
   return (
     <Modal
@@ -152,18 +169,18 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
           {saving && <ActivityIndicator size="small" color={tokens.accent} />}
         </View>
 
-        {task && (
+        {ct && (
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 48 }}>
             {/* Type + operation */}
             <View style={s.metaRow}>
               <Text style={[s.metaText, { color: tierColor }]}>
-                {TYPE_ICONS[task.type]} {TYPE_LABEL[task.type]}
+                {TYPE_ICONS[ct.type]} {TYPE_LABEL[ct.type]}
               </Text>
               <Text style={[s.metaText, { color: tokens.textTertiary }]}>{opName}</Text>
             </View>
 
             {/* Title */}
-            <Text style={[s.title, { color: tokens.textPrimary }]}>{task.title}</Text>
+            <Text style={[s.title, { color: tokens.textPrimary }]}>{ct.title}</Text>
 
             {/* Badges */}
             <View style={s.badgeRow}>
@@ -172,14 +189,14 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
                   <Text style={[s.badgeText, { color: currentState.color }]}>{currentState.label}</Text>
                 </View>
               )}
-              {task.importance != null && (
+              {ct.importance != null && (
                 <View style={[s.badge, { backgroundColor: priorityColor! + "22", borderColor: priorityColor! + "55" }]}>
-                  <Text style={[s.badgeText, { color: priorityColor! }]}>{PRIORITY_LABEL[task.importance]}</Text>
+                  <Text style={[s.badgeText, { color: priorityColor! }]}>{PRIORITY_LABEL[ct.importance]}</Text>
                 </View>
               )}
-              {task.endDate && (
+              {ct.endDate && (
                 <View style={[s.badge, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}>
-                  <Text style={[s.badgeText, { color: tokens.textTertiary }]}>Due {task.endDate}</Text>
+                  <Text style={[s.badgeText, { color: tokens.textTertiary }]}>Due {ct.endDate}</Text>
                 </View>
               )}
             </View>
@@ -196,11 +213,11 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
                       disabled={saving}
                       style={[
                         s.stateBtn,
-                        { borderColor: task.state === opt.key ? opt.color : tokens.border },
-                        task.state === opt.key && { backgroundColor: opt.color + "22" },
+                        { borderColor: ct.state === opt.key ? opt.color : tokens.border },
+                        ct.state === opt.key && { backgroundColor: opt.color + "22" },
                       ]}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: "600", color: task.state === opt.key ? opt.color : tokens.textSecondary }}>
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: ct.state === opt.key ? opt.color : tokens.textSecondary }}>
                         {opt.label}
                       </Text>
                     </TouchableOpacity>
@@ -211,8 +228,8 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
 
             {/* Time Logged */}
             <Text style={[s.sectionLabel, { color: tokens.textSecondary }]}>Time Logged</Text>
-            <View style={[s.timeCard, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}>
-              <Text style={{ fontSize: 28, fontWeight: "800", color: tokens.textPrimary }}>
+            <View style={[s.timeCard, { backgroundColor: tokens.bgCard, borderColor: timerRunning ? tokens.accent : tokens.border }]}>
+              <Text style={{ fontSize: 28, fontWeight: "800", color: timerRunning ? tokens.accent : tokens.textPrimary }}>
                 {formatTime(displaySeconds)}
               </Text>
               {!isDone && (
@@ -228,7 +245,7 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity
-                      style={[s.timerBtn, s.timerBtnStart, { backgroundColor: "#2563eb" }]}
+                      style={[s.timerBtn, s.timerBtnStart, { backgroundColor: "#b80000" }]}
                       onPress={handleTimerStop}
                       disabled={saving}
                       activeOpacity={0.8}
@@ -251,11 +268,11 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
             </View>
 
             {/* Notes */}
-            {task.notes ? (
+            {ct.notes ? (
               <>
                 <Text style={[s.sectionLabel, { color: tokens.textSecondary }]}>Notes</Text>
                 <View style={[s.notesCard, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}>
-                  <Text style={{ color: tokens.textPrimary, fontSize: 14, lineHeight: 22 }}>{task.notes}</Text>
+                  <Text style={{ color: tokens.textPrimary, fontSize: 14, lineHeight: 22 }}>{ct.notes}</Text>
                 </View>
               </>
             ) : null}

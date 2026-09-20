@@ -16,7 +16,7 @@ export default function Index() {
     );
   }
 
-  if (store.apiKey) {
+  if (store.token) {
     return <Redirect href="/(tabs)/" />;
   }
 

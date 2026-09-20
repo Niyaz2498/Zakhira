@@ -1,46 +1,38 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
-import { saveCredentials, sync } from "../store";
+import { saveToken, sync } from "../store";
 import { ZakhiraClient } from "@zakhira/core";
 import type { ColorTokens } from "@zakhira/ui";
 
 export function Setup() {
   const { tokens } = useTheme();
-  const [url, setUrl] = useState(import.meta.env.VITE_API_URL ?? "https://zakhira-backend.zakhira.workers.dev");
-  const [apiKey, setApiKey] = useState("");
+  const url = import.meta.env.VITE_API_URL ?? "https://zakhira-backend.zakhira.workers.dev";
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleConnect() {
     setError(null);
-    if (!apiKey.trim() || !url.trim()) {
-      setError("Both URL and API key are required.");
+    if (!username.trim() || !password || !url.trim()) {
+      setError("Username, password, and server URL are all required.");
       return;
     }
     setLoading(true);
-
-    // Step 1: verify the connection and key
-    let connectionOk = false;
     try {
-      const client = new ZakhiraClient(url.trim(), apiKey.trim());
-      const res = await client.listOperations();
+      const client = new ZakhiraClient(url.trim(), "");
+      const res = await client.login(username.trim(), password);
       if (!res.ok) {
-        setError(res.error ?? "Invalid API key.");
+        setError(res.error ?? "Invalid username or password.");
         setLoading(false);
         return;
       }
-      connectionOk = true;
+      saveToken(res.data.token, url.trim());
+      sync().catch(console.error);
     } catch (e) {
       setError(`Could not reach the server. Check the URL.\n${e instanceof Error ? e.message : String(e)}`);
-      setLoading(false);
-      return;
-    }
-
-    // Step 2: persist credentials and kick off initial sync
-    if (connectionOk) {
-      saveCredentials(apiKey.trim(), url.trim()); // sync, updates store immediately
-      sync().catch(console.error);
+    } finally {
       setLoading(false);
     }
   }
@@ -68,31 +60,34 @@ export function Setup() {
           Zakhira
         </h1>
         <p style={{ color: tokens.textTertiary, fontSize: 13, marginBottom: 32 }}>
-          Connect to your backend to get started.
+          Sign in to get started.
         </p>
 
         <label style={{ display: "block", marginBottom: 16 }}>
           <span style={{ display: "block", fontSize: 11, color: tokens.textSecondary, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-            Server URL
+            Username
           </span>
           <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             style={inputStyle(tokens)}
-            placeholder="https://zakhira-backend.zakhira.workers.dev"
+            placeholder="your username"
+            autoComplete="username"
           />
         </label>
 
         <label style={{ display: "block", marginBottom: 24 }}>
           <span style={{ display: "block", fontSize: 11, color: tokens.textSecondary, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-            API Key
+            Password
           </span>
           <input
             type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            style={{ ...inputStyle(tokens), fontFamily: "'JetBrains Mono', monospace" }}
-            placeholder="Paste your key"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleConnect()}
+            style={inputStyle(tokens)}
+            placeholder="your password"
+            autoComplete="current-password"
           />
         </label>
 
@@ -115,7 +110,7 @@ export function Setup() {
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
-          {loading ? "Connecting…" : "Connect"}
+          {loading ? "Signing in…" : "Sign In"}
         </button>
       </div>
     </div>
@@ -133,5 +128,6 @@ function inputStyle(tokens: ColorTokens): CSSProperties {
     color: tokens.textPrimary,
     fontSize: 14,
     outline: "none",
+    boxSizing: "border-box",
   };
 }

@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
-import { getClient, setDisplayName } from "../store";
-import type { ApiKey } from "@zakhira/core";
+import { setDisplayName } from "../store";
 import type { ColorTokens } from "@zakhira/ui";
 
 function SectionTitle({ label, tokens }: { label: string; tokens: ColorTokens }) {
@@ -28,25 +27,6 @@ export function Settings() {
   const store = useStore();
   const [nameInput, setNameInput] = useState(store.displayName ?? "");
   const [nameSaved, setNameSaved] = useState(false);
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [keysLoaded, setKeysLoaded] = useState(false);
-
-  useEffect(() => {
-    const client = getClient();
-    if (!client) { setKeysLoaded(true); return; }
-    client.listApiKeys().then((res) => {
-      if (res.ok) setApiKeys(res.data);
-      setKeysLoaded(true);
-    }).catch(() => setKeysLoaded(true));
-  }, []);
-
-  async function handleRevoke(id: string, name: string) {
-    if (!confirm(`Revoke key "${name}"? This cannot be undone.`)) return;
-    const client = getClient();
-    if (!client) return;
-    const res = await client.revokeApiKey(id);
-    if (res.ok) setApiKeys((prev) => prev.filter((k) => k.id !== id));
-  }
 
   const section: CSSProperties = {
     backgroundColor: tokens.bgCard,
@@ -163,47 +143,6 @@ export function Settings() {
                 : "Never"}
             </span>
           </div>
-        </section>
-
-        {/* API Keys */}
-        <section style={section}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <SectionTitle label="API Keys" tokens={tokens} />
-            <button
-              style={{ color: tokens.accent, fontSize: 13, fontWeight: 500 }}
-            >
-              + New key
-            </button>
-          </div>
-          {!keysLoaded && (
-            <div style={{ color: tokens.textTertiary, fontSize: 13 }}>Loading…</div>
-          )}
-          {keysLoaded && apiKeys.length === 0 && (
-            <div style={{ color: tokens.textTertiary, fontSize: 13 }}>No API keys yet.</div>
-          )}
-          {apiKeys.map((k, i) => (
-            <div
-              key={k.id}
-              style={i < apiKeys.length - 1 ? row : lastRow}
-            >
-              <div>
-                <div style={{ fontSize: 14, color: tokens.textPrimary, fontWeight: 500 }}>
-                  {k.name}
-                </div>
-                <div style={{ fontSize: 12, color: tokens.textTertiary }}>
-                  {k.scope === "all"
-                    ? "Full access"
-                    : `Scoped (${k.operationIds?.length ?? 0} operations)`}
-                </div>
-              </div>
-              <button
-                onClick={() => handleRevoke(k.id, k.name)}
-                style={{ color: "#e05555", fontSize: 13 }}
-              >
-                Revoke
-              </button>
-            </div>
-          ))}
         </section>
       </div>
     </div>

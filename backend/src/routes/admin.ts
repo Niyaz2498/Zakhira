@@ -3,52 +3,46 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, or } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { adminAuthMiddleware } from "../middleware/adminAuth.js";
-import { generateApiKey, hashKey } from "../utils/crypto.js";
+import { hashPassword } from "../utils/crypto.js";
 import type { Bindings, AppDB } from "../types.js";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", adminAuthMiddleware);
 
-// GET /admin/users — list all users with their key count
+// GET /admin/users — list all users
 app.get("/users", async (c) => {
   const db = drizzle(c.env.DB, { schema }) as AppDB;
-  const userRows = await db.query.users.findMany();
-  const keyRows = await db.query.apiKeys.findMany();
-
-  const keyCountByUser = new Map<string, number>();
-  for (const k of keyRows) {
-    if (k.userId) keyCountByUser.set(k.userId, (keyCountByUser.get(k.userId) ?? 0) + 1);
-  }
-
-  const data = userRows.map((u) => ({
-    id: u.id,
-    email: u.email,
-    keyCount: keyCountByUser.get(u.id) ?? 0,
-    createdAt: u.createdAt,
-  }));
-
-  return c.json({ ok: true, data });
+  const users = await db.query.users.findMany();
+  return c.json({
+    ok: true,
+    data: users.map((u) => ({ id: u.id, email: u.email, username: u.username, createdAt: u.createdAt })),
+  });
 });
 
-// POST /admin/users — create a new user and their "General Tasks" operation
+// POST /admin/users — create a new user with username + password
 app.post("/users", async (c) => {
-  const body = await c.req.json<{ email: string }>();
-  if (!body.email?.trim()) return c.json({ ok: false, error: "email is required" }, 400);
+  const body = await c.req.json<{ username: string; password: string; email?: string }>();
+  if (!body.username?.trim()) return c.json({ ok: false, error: "username is required" }, 400);
+  if (!body.password) return c.json({ ok: false, error: "password is required" }, 400);
 
   const db = drizzle(c.env.DB, { schema }) as AppDB;
 
   const existing = await db.query.users.findFirst({
-    where: eq(schema.users.email, body.email.trim()),
+    where: eq(schema.users.username, body.username.trim()),
   });
-  if (existing) return c.json({ ok: false, error: "User already exists" }, 409);
+  if (existing) return c.json({ ok: false, error: "Username already taken" }, 409);
 
+  const passwordHash = await hashPassword(body.password);
   const now = new Date().toISOString();
   const userId = crypto.randomUUID();
+  const email = body.email?.trim() || `${body.username.trim()}@local`;
 
   await db.insert(schema.users).values({
     id: userId,
-    email: body.email.trim(),
+    email,
+    username: body.username.trim(),
+    passwordHash,
     createdAt: now,
     updatedAt: now,
   });
@@ -67,43 +61,27 @@ app.post("/users", async (c) => {
     updatedAt: now,
   });
 
-  return c.json({ ok: true, data: { id: userId, email: body.email.trim(), createdAt: now } }, 201);
+  return c.json({ ok: true, data: { id: userId, username: body.username.trim(), email, createdAt: now } }, 201);
 });
 
-// POST /admin/users/:id/keys — mint a key for a user
-app.post("/users/:id/keys", async (c) => {
+// PATCH /admin/users/:id — update username or password
+app.patch("/users/:id", async (c) => {
   const db = drizzle(c.env.DB, { schema }) as AppDB;
   const userId = c.req.param("id");
 
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
   if (!user) return c.json({ ok: false, error: "User not found" }, 404);
 
-  const body = await c.req.json<{ name: string }>();
-  if (!body.name?.trim()) return c.json({ ok: false, error: "name is required" }, 400);
-
-  const plaintext = generateApiKey();
-  const hash = await hashKey(plaintext);
+  const body = await c.req.json<{ username?: string; password?: string; email?: string }>();
   const now = new Date().toISOString();
-  const keyId = crypto.randomUUID();
 
-  await db.insert(schema.apiKeys).values({
-    id: keyId,
-    userId,
-    keyHash: hash,
-    name: body.name.trim(),
-    scope: "all",
-    lastUsedAt: null,
-    createdAt: now,
-    updatedAt: now,
-  });
+  const updates: Partial<typeof schema.users.$inferInsert> = { updatedAt: now };
+  if (body.username?.trim()) updates.username = body.username.trim();
+  if (body.email?.trim()) updates.email = body.email.trim();
+  if (body.password) updates.passwordHash = await hashPassword(body.password);
 
-  return c.json({
-    ok: true,
-    data: {
-      key: { id: keyId, name: body.name.trim(), scope: "all", createdAt: now },
-      plaintext,
-    },
-  }, 201);
+  await db.update(schema.users).set(updates).where(eq(schema.users.id, userId));
+  return c.json({ ok: true, data: { id: userId, updatedAt: now } });
 });
 
 // DELETE /admin/users/:id — delete user and all their data
@@ -114,17 +92,10 @@ app.delete("/users/:id", async (c) => {
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, userId) });
   if (!user) return c.json({ ok: false, error: "User not found" }, 404);
 
-  // 1. Revoke all their API keys (clear scoped links first)
-  const keys = await db.query.apiKeys.findMany({ where: eq(schema.apiKeys.userId, userId) });
-  for (const k of keys) {
-    await db.delete(schema.apiKeyOperations).where(eq(schema.apiKeyOperations.apiKeyId, k.id));
-  }
-  await db.delete(schema.apiKeys).where(eq(schema.apiKeys.userId, userId));
-
-  // 2. Delete their reminders
+  // Delete reminders
   await db.delete(schema.reminders).where(eq(schema.reminders.userId, userId));
 
-  // 3. Delete their tasks (clear dependency edges first)
+  // Delete tasks (clear dependency edges first)
   const ops = await db.query.operations.findMany({ where: eq(schema.operations.userId, userId) });
   for (const op of ops) {
     const tasks = await db.query.tasks.findMany({ where: eq(schema.tasks.operationId, op.id) });
@@ -136,27 +107,11 @@ app.delete("/users/:id", async (c) => {
     await db.delete(schema.tasks).where(eq(schema.tasks.operationId, op.id));
   }
 
-  // 4. Delete their operations
+  // Delete operations then user
   await db.delete(schema.operations).where(eq(schema.operations.userId, userId));
-
-  // 5. Delete the user
   await db.delete(schema.users).where(eq(schema.users.id, userId));
 
   return c.json({ ok: true, data: { deleted: true } });
-});
-
-// DELETE /admin/keys/:id — revoke any key
-app.delete("/keys/:id", async (c) => {
-  const db = drizzle(c.env.DB, { schema }) as AppDB;
-  const id = c.req.param("id");
-
-  const row = await db.query.apiKeys.findFirst({ where: eq(schema.apiKeys.id, id) });
-  if (!row) return c.json({ ok: false, error: "Not found" }, 404);
-
-  await db.delete(schema.apiKeyOperations).where(eq(schema.apiKeyOperations.apiKeyId, id));
-  await db.delete(schema.apiKeys).where(eq(schema.apiKeys.id, id));
-
-  return c.json({ ok: true, data: { revoked: true } });
 });
 
 export default app;
