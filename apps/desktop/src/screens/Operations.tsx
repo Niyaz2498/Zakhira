@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { getClient, addOperation } from "../store";
-import { computeOperationStats } from "@zakhira/core";
+import { computeOperationStats, groupTasksForDisplay } from "@zakhira/core";
 import { DateInput } from "../components/FormControls";
 import { TaskModal } from "../components/TaskModal";
 import type { Operation, Task } from "@zakhira/core";
@@ -11,6 +11,74 @@ import type { ColorTokens } from "@zakhira/ui";
 
 type Priority = "low" | "medium" | "high";
 const PRIORITY_VALUE: Record<Priority, number> = { low: 1, medium: 2, high: 3 };
+
+// ── Task list pieces ──────────────────────────────────────────────────────────
+
+/** A single task row. Finished tasks render dimmed so the eye skips them. */
+function TaskRow({ task, tokens, onClick, dimmed }: {
+  task: Task; tokens: ColorTokens; onClick: () => void; dimmed?: boolean;
+}) {
+  const stateColor = STATE_COLOR[task.state] ?? tokens.textTertiary;
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: "10px 14px", marginBottom: 8,
+        backgroundColor: tokens.bgSurface,
+        border: `1px solid ${tokens.border}`,
+        borderRadius: 10, cursor: "pointer",
+        transition: "border-color 0.12s, opacity 0.12s",
+        opacity: dimmed ? 0.55 : 1,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = tokens.accent;
+        e.currentTarget.style.opacity = "1";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = tokens.border;
+        e.currentTarget.style.opacity = dimmed ? "0.55" : "1";
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{
+          fontSize: 14, fontWeight: 500, color: tokens.textPrimary,
+          textDecoration: task.state === "completed" ? "line-through" : "none",
+        }}>
+          {task.title}
+        </div>
+        <span style={{
+          fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10,
+          color: stateColor, backgroundColor: stateColor + "22",
+          textTransform: "capitalize", whiteSpace: "nowrap",
+        }}>
+          {task.state.replace("_", " ")}
+        </span>
+      </div>
+      {task.notes && (
+        <div style={{ fontSize: 12, color: tokens.textSecondary, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {task.notes}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Rule with a centred "Completed" label, separating open work from finished. */
+function CompletedDivider({ tokens, count }: { tokens: ColorTokens; count: number }) {
+  const line: CSSProperties = { flex: 1, height: 1, backgroundColor: tokens.border };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0 12px" }}>
+      <div style={line} />
+      <span style={{
+        fontSize: 11, fontWeight: 600, textTransform: "uppercase",
+        letterSpacing: "0.06em", color: tokens.textTertiary, whiteSpace: "nowrap",
+      }}>
+        Completed {count > 0 && <span style={{ fontWeight: 400 }}>{count}</span>}
+      </span>
+      <div style={line} />
+    </div>
+  );
+}
 
 function FieldLabel({ text, required }: { text: string; required?: boolean }) {
   return (
@@ -146,8 +214,7 @@ function OperationTasksPanel({
 }) {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const opTasks = tasks.filter((t) => t.operationId === op.id);
-  const active = opTasks.filter((t) => t.state !== "completed" && t.state !== "scrapped");
-  const done = opTasks.filter((t) => t.state === "completed" || t.state === "scrapped");
+  const { active, done } = groupTasksForDisplay(opTasks);
 
   return (
     <>
@@ -187,37 +254,14 @@ function OperationTasksPanel({
               No tasks in this operation yet.
             </div>
           )}
-          {opTasks.map((t) => (
-            <div
-              key={t.id}
-              onClick={() => setSelectedTask(t)}
-              style={{
-                padding: "10px 14px", marginBottom: 8,
-                backgroundColor: tokens.bgSurface,
-                border: `1px solid ${tokens.border}`,
-                borderRadius: 10, cursor: "pointer",
-                transition: "border-color 0.12s",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.borderColor = tokens.accent)}
-              onMouseLeave={(e) => (e.currentTarget.style.borderColor = tokens.border)}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: tokens.textPrimary }}>{t.title}</div>
-                <span style={{
-                  fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10,
-                  color: STATE_COLOR[t.state] ?? tokens.textTertiary,
-                  backgroundColor: (STATE_COLOR[t.state] ?? tokens.textTertiary) + "22",
-                  textTransform: "capitalize", whiteSpace: "nowrap",
-                }}>
-                  {t.state.replace("_", " ")}
-                </span>
-              </div>
-              {t.notes && (
-                <div style={{ fontSize: 12, color: tokens.textSecondary, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {t.notes}
-                </div>
-              )}
-            </div>
+          {active.map((t) => (
+            <TaskRow key={t.id} task={t} tokens={tokens} onClick={() => setSelectedTask(t)} />
+          ))}
+
+          {done.length > 0 && <CompletedDivider tokens={tokens} count={done.length} />}
+
+          {done.map((t) => (
+            <TaskRow key={t.id} task={t} tokens={tokens} dimmed onClick={() => setSelectedTask(t)} />
           ))}
         </div>
       </div>
