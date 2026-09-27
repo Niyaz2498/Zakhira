@@ -97,3 +97,42 @@ export function computeOperationStats(tasks: Task[]): OperationStats {
 export function buildPrereqMap(tasks: Task[]): Map<string, string[]> {
   return new Map(tasks.map((t) => [t.id, t.prerequisites]));
 }
+
+// ─── Display ordering ────────────────────────────────────────────────────────
+
+/**
+ * Sort rank for a task's state. Open work comes first, most-active first, so
+ * what you're currently doing sits at the top of the list; finished work sinks.
+ */
+const STATE_DISPLAY_RANK: Record<TaskState, number> = {
+  in_progress: 0,
+  todo: 1,
+  blocked: 2,
+  completed: 3,
+  scrapped: 4,
+};
+
+export interface TaskDisplayGroups {
+  /** Still open: in progress, then todo, then blocked. */
+  active: Task[];
+  /** Finished: completed, then scrapped. Rendered below a divider. */
+  done: Task[];
+}
+
+/**
+ * Split an operation's tasks into the two groups the Operations screens render.
+ *
+ * Sorting is by state rank only. `Array.prototype.sort` is stable, so tasks
+ * sharing a state keep the order they came in — a task won't jump position
+ * because an unrelated one changed.
+ */
+export function groupTasksForDisplay(tasks: Task[]): TaskDisplayGroups {
+  const byRank = (a: Task, b: Task) =>
+    STATE_DISPLAY_RANK[a.state] - STATE_DISPLAY_RANK[b.state];
+
+  return {
+    // filter() copies, so sorting these never mutates the caller's array.
+    active: tasks.filter((t) => isTaskOpen(t.state)).sort(byRank),
+    done: tasks.filter((t) => !isTaskOpen(t.state)).sort(byRank),
+  };
+}

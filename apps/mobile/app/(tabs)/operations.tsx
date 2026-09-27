@@ -16,7 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../../src/theme/ThemeContext";
 import { useStore } from "../../src/store/useStore";
 import { getClient, addOperationToStore, addTaskToStore } from "../../src/store";
-import { computeOperationStats } from "@zakhira/core";
+import { computeOperationStats, groupTasksForDisplay } from "@zakhira/core";
 import type { Operation, Task, TaskType } from "@zakhira/core";
 import { TaskDetailModal } from "../../src/components/TaskDetailModal";
 
@@ -277,6 +277,51 @@ const STATE_COLORS: Record<string, string> = {
   completed: "#22c55e", scrapped: "#475569",
 };
 
+// ── Task list pieces ──────────────────────────────────────────────────────────
+
+/** A single task row. Finished tasks render dimmed so the eye skips past them. */
+function TaskRow({ task, tokens, onPress, dimmed }: {
+  task: Task; tokens: any; onPress: () => void; dimmed?: boolean;
+}) {
+  const sc = STATE_COLORS[task.state] ?? "#64748b";
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[
+        ls.taskRow,
+        { backgroundColor: tokens.bgCard, borderColor: tokens.border },
+        dimmed && { opacity: 0.55 },
+      ]}
+      activeOpacity={0.75}
+    >
+      <View style={[ls.stateDot, { backgroundColor: sc }]} />
+      <Text
+        style={[
+          { flex: 1, color: tokens.textPrimary, fontSize: 14 },
+          task.state === "completed" && { textDecorationLine: "line-through" as const },
+        ]}
+        numberOfLines={1}
+      >
+        {task.title}
+      </Text>
+      <Text style={{ color: tokens.textTertiary, fontSize: 12 }}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
+/** Rule with a centred "Completed" label, separating open work from finished. */
+function CompletedDivider({ tokens, count }: { tokens: any; count: number }) {
+  return (
+    <View style={ls.divider}>
+      <View style={[ls.dividerLine, { backgroundColor: tokens.border }]} />
+      <Text style={[ls.dividerLabel, { color: tokens.textTertiary }]}>
+        Completed {count}
+      </Text>
+      <View style={[ls.dividerLine, { backgroundColor: tokens.border }]} />
+    </View>
+  );
+}
+
 export default function OperationsScreen() {
   const { tokens } = useTheme();
   const store = useStore();
@@ -294,6 +339,11 @@ export default function OperationsScreen() {
   const opTasks = useMemo(
     () => selectedOp ? store.tasks.filter((t) => t.operationId === selectedOp.id) : [],
     [selectedOp, store.tasks]
+  );
+
+  const { active: activeTasks, done: doneTasks } = useMemo(
+    () => groupTasksForDisplay(opTasks),
+    [opTasks]
   );
 
   return (
@@ -340,21 +390,15 @@ export default function OperationsScreen() {
               <Text style={{ fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6, color: tokens.textSecondary, marginBottom: 12 }}>
                 Tasks  <Text style={{ color: tokens.textTertiary, fontWeight: "400" }}>{opTasks.length}</Text>
               </Text>
-              {opTasks.map((task) => {
-                const sc = STATE_COLORS[task.state] ?? "#64748b";
-                return (
-                  <TouchableOpacity
-                    key={task.id}
-                    onPress={() => setSelectedTask(task)}
-                    style={[ls.taskRow, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}
-                    activeOpacity={0.75}
-                  >
-                    <View style={[ls.stateDot, { backgroundColor: sc }]} />
-                    <Text style={{ flex: 1, color: tokens.textPrimary, fontSize: 14 }} numberOfLines={1}>{task.title}</Text>
-                    <Text style={{ color: tokens.textTertiary, fontSize: 12 }}>›</Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {activeTasks.map((task) => (
+                <TaskRow key={task.id} task={task} tokens={tokens} onPress={() => setSelectedTask(task)} />
+              ))}
+
+              {doneTasks.length > 0 && <CompletedDivider tokens={tokens} count={doneTasks.length} />}
+
+              {doneTasks.map((task) => (
+                <TaskRow key={task.id} task={task} tokens={tokens} dimmed onPress={() => setSelectedTask(task)} />
+              ))}
               {opTasks.length === 0 && (
                 <Text style={{ color: tokens.textTertiary, textAlign: "center", marginTop: 40 }}>
                   No tasks yet — tap + to add one
@@ -403,4 +447,7 @@ const ls = StyleSheet.create({
     padding: 12, borderRadius: 10, borderWidth: 1, marginBottom: 8,
   },
   stateDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  divider: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 18, marginBottom: 12 },
+  dividerLine: { flex: 1, height: 1 },
+  dividerLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
 });
