@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the main Zakhira window.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:default",
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

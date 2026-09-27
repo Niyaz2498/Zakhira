@@ -8,6 +8,8 @@ import { RemindersScreen } from "./screens/Reminders";
 import { Settings } from "./screens/Settings";
 import { Setup } from "./screens/Setup";
 import { TaskHistory } from "./screens/TaskHistory";
+import { UpdateBanner } from "./components/UpdateBanner";
+import { checkForUpdate } from "./updater";
 
 type Screen = "dashboard" | "operations" | "reminders" | "history" | "settings";
 
@@ -19,6 +21,8 @@ function Shell() {
   useEffect(() => {
     loadFromStore();
     sync();
+    // Fire-and-forget: checkForUpdate swallows its own errors.
+    checkForUpdate();
     const interval = setInterval(() => sync(), 60_000);
     return () => clearInterval(interval);
   }, []);
@@ -121,6 +125,7 @@ function Shell() {
 
       {/* Main content */}
       <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <UpdateBanner />
         {screen === "dashboard" && <Dashboard />}
         {screen === "operations" && <Operations />}
         {screen === "reminders" && <RemindersScreen />}

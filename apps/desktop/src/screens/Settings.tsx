@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { setDisplayName } from "../store";
 import type { ColorTokens } from "@zakhira/ui";
+import { getVersion } from "@tauri-apps/api/app";
+import { useUpdater, checkForUpdate, installUpdate } from "../updater";
 
 function SectionTitle({ label, tokens }: { label: string; tokens: ColorTokens }) {
   return (
@@ -27,6 +29,14 @@ export function Settings() {
   const store = useStore();
   const [nameInput, setNameInput] = useState(store.displayName ?? "");
   const [nameSaved, setNameSaved] = useState(false);
+  const updater = useUpdater();
+  const [appVersion, setAppVersion] = useState("—");
+
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch((err) => console.warn("[settings] version lookup failed:", err));
+  }, []);
 
   const section: CSSProperties = {
     backgroundColor: tokens.bgCard,
@@ -142,6 +152,67 @@ export function Settings() {
                 ? new Date(store.lastSyncedAt).toLocaleTimeString()
                 : "Never"}
             </span>
+          </div>
+        </section>
+
+        {/* Updates */}
+        <section style={section}>
+          <SectionTitle label="Updates" tokens={tokens} />
+          <div style={row}>
+            <span style={{ color: tokens.textPrimary }}>Version</span>
+            <span style={{ color: tokens.textTertiary, fontSize: 12 }}>
+              {appVersion}
+            </span>
+          </div>
+          <div style={lastRow}>
+            <span style={{ color: tokens.textPrimary }}>
+              {updater.status === "available" || updater.status === "downloading"
+                ? `Update to v${updater.version}`
+                : "Check for updates"}
+            </span>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {updater.checkedAndCurrent && updater.status === "idle" && (
+                <span style={{ color: tokens.textTertiary, fontSize: 12 }}>
+                  Up to date
+                </span>
+              )}
+              <button
+                onClick={
+                  updater.status === "available" ? installUpdate : checkForUpdate
+                }
+                disabled={
+                  updater.status === "checking" || updater.status === "downloading"
+                }
+                style={{
+                  padding: "6px 14px",
+                  border: `1px solid ${tokens.border}`,
+                  borderRadius: 8,
+                  color:
+                    updater.status === "available"
+                      ? tokens.accentOn
+                      : tokens.textPrimary,
+                  backgroundColor:
+                    updater.status === "available"
+                      ? tokens.accent
+                      : tokens.bgSurface,
+                  fontSize: 13,
+                  fontWeight: updater.status === "available" ? 600 : 400,
+                  cursor: "pointer",
+                }}
+              >
+                {updater.status === "checking"
+                  ? "Checking…"
+                  : updater.status === "downloading"
+                    ? updater.progress !== null
+                      ? `${updater.progress}%`
+                      : "Downloading…"
+                    : updater.status === "ready"
+                      ? "Restarting…"
+                      : updater.status === "available"
+                        ? "Restart to update"
+                        : "Check now"}
+              </button>
+            </div>
           </div>
         </section>
       </div>
