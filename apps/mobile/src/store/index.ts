@@ -3,6 +3,7 @@ import * as SecureStore from "expo-secure-store";
 declare const process: { env: Record<string, string | undefined> };
 import { ZakhiraClient } from "@zakhira/core";
 import type { Operation, Task, Reminder } from "@zakhira/core";
+import { cancelAllTimerAlerts } from "../notifications";
 
 const TOKEN_STORE = "zakhira_token";
 const API_URL_STORE = "zakhira_api_url";
@@ -119,6 +120,9 @@ export async function sync(): Promise<void> {
 }
 
 export async function logout(): Promise<void> {
+  // Pending timer alerts are scheduled with the OS and would otherwise keep
+  // firing about tasks this device can no longer see.
+  await cancelAllTimerAlerts();
   await Promise.all([
     SecureStore.deleteItemAsync(TOKEN_STORE),
     SecureStore.deleteItemAsync(API_URL_STORE),

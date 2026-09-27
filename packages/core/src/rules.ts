@@ -136,3 +136,62 @@ export function groupTasksForDisplay(tasks: Task[]): TaskDisplayGroups {
     done: tasks.filter((t) => !isTaskOpen(t.state)).sort(byRank),
   };
 }
+
+// ─── Long-running timer alerts ───────────────────────────────────────────────
+
+/** How often to nudge while a timer keeps running, in seconds. */
+export const TIMER_ALERT_INTERVAL_SECONDS = 3600;
+
+/** How far ahead to schedule. Beyond a day the reminder has made its point. */
+export const TIMER_ALERT_MAX_ALERTS = 24;
+
+/**
+ * When to nudge about a task whose timer is still running.
+ *
+ * Alerts are anchored to `timerStartedAt` — the start of the *current* session —
+ * not to total time logged. A task with 45 minutes already banked that is
+ * restarted alerts once the new session reaches an hour, i.e. at 1h45m total.
+ * That is deliberate: the thing worth flagging is "you have been running this
+ * without pause", not "this task has consumed an hour overall".
+ *
+ * Returns absolute times so callers can schedule one-shot notifications that
+ * stay correctly anchored even if the app restarts mid-session. A repeating
+ * "every hour from now" trigger would drift on every relaunch.
+ *
+ * @param timerStartedAt ISO timestamp the session began, or null if stopped.
+ * @param now            Current time; injectable for testing.
+ */
+export function timerAlertTimes(
+  timerStartedAt: string | null,
+  now: Date = new Date(),
+): Date[] {
+  if (!timerStartedAt) return [];
+
+  const startMs = new Date(timerStartedAt).getTime();
+  if (Number.isNaN(startMs)) return [];
+
+  const times: Date[] = [];
+  for (let n = 1; n <= TIMER_ALERT_MAX_ALERTS; n++) {
+    const at = startMs + n * TIMER_ALERT_INTERVAL_SECONDS * 1000;
+    // Skip boundaries already passed — the app may have been closed through them.
+    if (at > now.getTime()) times.push(new Date(at));
+  }
+  return times;
+}
+
+/**
+ * Hours a timer has been running this session, floored. Used for alert copy
+ * ("Still tracking — 2h"), so it counts session time, not `timeLogged`.
+ */
+export function timerSessionHours(
+  timerStartedAt: string | null,
+  now: Date = new Date(),
+): number {
+  if (!timerStartedAt) return 0;
+  const startMs = new Date(timerStartedAt).getTime();
+  if (Number.isNaN(startMs)) return 0;
+  // Deliberately an hour, not TIMER_ALERT_INTERVAL_SECONDS: this is the copy
+  // shown to a human ("running for 2h"), so it must stay real hours even if
+  // the alert cadence is ever retuned.
+  return Math.floor((now.getTime() - startMs) / 3_600_000);
+}
