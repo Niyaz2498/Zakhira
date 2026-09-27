@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.0.0",
     "@tauri-apps/plugin-store": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0",
     "@zakhira/core": "workspace:*",
     "@zakhira/ui": "workspace:*",
     "react": "^18.3.0",

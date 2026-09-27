@@ -1,0 +1,220 @@
+name: Release
+
+# Pushing a semver tag cuts a release. Everything downstream — the APK version,
+# the macOS bundle version, the updater manifest — is derived from this tag.
+#
+#   git tag v1.4.0 && git push origin v1.4.0
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Needed to create the Release and upload assets with the built-in GITHUB_TOKEN.
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24"
+  PNPM_VERSION: "9.0.0"
+
+jobs:
+  # ── Create the release up front, as a draft ────────────────────────────────
+  # Both build jobs upload into this one release. Keeping it a draft until both
+  # succeed means Obtainium and the Tauri updater never see a half-published
+  # release with only one platform's artifacts in it.
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release_id: ${{ steps.release.outputs.result }}
+    steps:
+      - id: meta
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - id: release
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const version = "${{ steps.meta.outputs.version }}";
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref.replace("refs/tags/", ""),
+              name: `Zakhira v${version}`,
+              body: `Zakhira v${version}\n\n- **Android** — install \`zakhira-v${version}.apk\` (tracked automatically by Obtainium).\n- **macOS (Apple Silicon)** — \`Zakhira_${version}_aarch64.dmg\`, or let the app update itself.`,
+              draft: true,
+              prerelease: false,
+            });
+            return data.id.toString();
+
+  # ── Android: sideloadable APK ──────────────────────────────────────────────
+  android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stamp version from tag
+        run: node scripts/set-version.mjs "${{ needs.create-release.outputs.version }}"
+
+      # android/ is not committed (CNG) — regenerate it from app.json, which the
+      # step above just stamped with both version and versionCode.
+      - name: Prebuild native Android project
+        # --no-install: dependencies are already installed above, and letting
+        # prebuild re-run the package manager would fight --frozen-lockfile.
+        run: pnpm --filter @zakhira/mobile exec expo prebuild --platform android --clean --no-install
+        env:
+          EXPO_NO_TELEMETRY: "1"
+
+      - name: Inject release signing config
+        run: node scripts/patch-android-signing.mjs
+
+      # Decoded outside the repo tree so it can never be picked up by a build
+      # step, and removed again in the always() step below.
+      - name: Decode keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/zakhira.jks"
+          echo "keystore bytes: $(stat -c%s "$RUNNER_TEMP/zakhira.jks")"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('apps/mobile/package.json', 'pnpm-lock.yaml') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Credentials reach Gradle as ORG_GRADLE_PROJECT_* env vars, which Gradle
+      # maps to project properties of the same name. Deliberately not -P flags:
+      # those land in the process argument list and can be echoed by verbose
+      # Gradle logging. Nothing is written to gradle.properties either, so no
+      # credential ever touches the workspace on disk.
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        env:
+          ORG_GRADLE_PROJECT_ZAKHIRA_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_ZAKHIRA_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_ZAKHIRA_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export ORG_GRADLE_PROJECT_ZAKHIRA_UPLOAD_STORE_FILE="$RUNNER_TEMP/zakhira.jks"
+          ./gradlew assembleRelease --no-daemon
+
+      # Guards against the signing config silently not applying and shipping an
+      # APK signed with the public debug key.
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          "$APKSIGNER" verify --print-certs \
+            apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if "$APKSIGNER" verify --print-certs \
+               apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+             | grep -qi "SHA-1 digest: 5e8f16062ea3cd2c4a0d547876baa6f38cabf625"; then
+            echo "::error::APK is signed with the public React Native debug key"
+            exit 1
+          fi
+
+      - name: Rename APK for Obtainium
+        run: |
+          mkdir -p dist-release
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+             "dist-release/zakhira-v${{ needs.create-release.outputs.version }}.apk"
+
+      - name: Upload APK to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist-release/zakhira-v${{ needs.create-release.outputs.version }}.apk" \
+            --clobber
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/zakhira.jks"
+
+  # ── macOS: Apple Silicon .dmg + updater artifacts ──────────────────────────
+  macos:
+    needs: create-release
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      # Caches the Cargo registry and target/ dir — the single biggest lever on
+      # macOS minutes, which bill at 10x the Linux rate.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stamp version from tag
+        run: node scripts/set-version.mjs "${{ needs.create-release.outputs.version }}"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update payload so the installed app will accept it. This is
+          # the updater's own keypair and is unrelated to Apple code signing.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Apple code signing / notarization is deliberately not configured —
+          # the app is unsigned and macOS will require a right-click → Open on
+          # first launch. To enable it later, add APPLE_CERTIFICATE,
+          # APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, APPLE_ID,
+          # APPLE_PASSWORD and APPLE_TEAM_ID here — nothing else needs to change.
+        with:
+          projectPath: apps/desktop
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: --target aarch64-apple-darwin
+          includeUpdaterJson: true
+
+  # ── Publish once both platforms are in ─────────────────────────────────────
+  publish:
+    needs: [create-release, android, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false,
+            });

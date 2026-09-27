@@ -3,7 +3,11 @@
 Zakhira has three parts:
 - **Backend** — a Cloudflare Worker + D1 database (hosted, free)
 - **Desktop app** — a Tauri native app (macOS/Windows/Linux)
-- **Mobile app** — an Android APK built via EAS (Expo Application Services)
+- **Mobile app** — a sideloaded Android APK
+
+> **Shipping a new version?** Don't follow this file — push a `vX.Y.Z` tag and CI
+> builds and publishes both apps. See [docs/RELEASING.md](docs/RELEASING.md).
+> The manual steps below are for first-time setup and local builds.
 
 ---
 
@@ -18,8 +22,8 @@ npm install -g pnpm
 # Cloudflare CLI (used to deploy the worker and manage D1)
 npm install -g wrangler
 
-# Expo CLI + EAS CLI (used to build the Android APK)
-npm install -g expo-cli eas-cli
+# Java 17 (required to build the Android APK locally)
+brew install --cask temurin@17
 
 # Rust (required by Tauri to build the desktop app)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -170,42 +174,37 @@ Hit **Connect**.
 
 ## Part 3 — Build the Mobile App (Android APK)
 
-### 1. Log in to Expo
+Releases are built by CI — see [docs/RELEASING.md](docs/RELEASING.md) for the tag
+flow and the Obtainium setup. This section covers building an APK locally.
 
-```sh
-eas login
-```
+### 1. Generate the native project
 
-Create a free account at [expo.dev](https://expo.dev) if you don't have one.
-
-### 2. Build the APK
+`apps/mobile/android/` is generated and gitignored (CNG):
 
 ```sh
 cd apps/mobile
-eas build --platform android --profile preview
+npx expo prebuild --platform android
 ```
 
-EAS builds on Expo's cloud servers (~5 minutes). When done it prints a download link. The APK is also available at [expo.dev](https://expo.dev) under your project → Builds.
+### 2. Build
 
-> The `preview` profile produces a sideloadable `.apk`. Use `--profile production` for a Play Store `.aab`.
+```sh
+cd apps/mobile/android
+./gradlew assembleRelease
+```
+
+The APK lands at `app/build/outputs/apk/release/app-release.apk`.
+
+> A local build with no keystore properties is signed with the React Native
+> **debug** key, which is public. It is fine for testing on your own device, but
+> it will not update an app installed from a CI release, and must never be
+> distributed. CI passes the real keystore in — see docs/RELEASING.md.
 
 ### 3. Install on your phone
 
-1. Download the `.apk` from the EAS link
-2. Rename it: `mv ~/Downloads/application-*.apk ~/Downloads/zakhira.apk`
-3. Enable **Install from unknown sources** on your Android device
-4. Open `zakhira.apk` to install
-5. On first launch enter your Server URL and API Key (same as desktop)
-
-### 4. Upload to GitHub Releases (optional)
-
-```sh
-gh release create v1.0.0 ~/Downloads/zakhira.apk#zakhira.apk \
-  --title "Zakhira v1.0.0" \
-  --notes "Android release"
-```
-
-The `#zakhira.apk` suffix sets the display name in GitHub Releases so people download it as `zakhira.apk`.
+1. Enable **Install from unknown sources** on your Android device
+2. `adb install -r app-release.apk`, or copy the APK across and open it
+3. On first launch enter your Server URL and API Key (same as desktop)
 
 ---
 
@@ -221,21 +220,13 @@ wrangler deploy
 
 ### Desktop app
 
-```sh
-cd apps/desktop
-pnpm tauri:build
-```
-
-Replace the installed app with the new one from `bundle/`.
+Push a `vX.Y.Z` tag. The installed app checks for updates on launch and offers
+"Restart to update" — no manual replacement. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Mobile app
 
-```sh
-cd apps/mobile
-eas build --platform android --profile preview
-```
-
-Download the new APK and reinstall.
+Push a `vX.Y.Z` tag — CI builds the APK and attaches it to the GitHub Release,
+and Obtainium picks it up on your phone. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ---
 

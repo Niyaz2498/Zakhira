@@ -34,7 +34,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzMkM3RUJFRkYwNkEyNjcKUldSbm9nYi92bjRzVThQTmthYzJldHltaUZHNzdRK1BabkR3QjBjait2OUwzSkFBN3dGcnFBU3kK",
+      "endpoints": [
+        "https://github.com/Niyaz2498/Zakhira/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }
