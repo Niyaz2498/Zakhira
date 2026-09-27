@@ -69,7 +69,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # packages: '' is load-bearing — the action's default is "tools
+      # platform-tools", and the obsolete `tools` package no longer exists in
+      # the SDK repository, so the default makes sdkmanager exit 1. The runner
+      # image already ships the SDK; all we need from this action is license
+      # acceptance, which still runs.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

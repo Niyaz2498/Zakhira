@@ -116,10 +116,23 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 | `ANDROID_KEYSTORE_PASSWORD` | Store password from `keytool` |
 | `ANDROID_KEY_ALIAS` | `zakhira` (or whatever `-alias` you used) |
 | `ANDROID_KEY_PASSWORD` | Key password (often the same as the store password) |
-| `TAURI_SIGNING_PRIVATE_KEY` | Private key from `tauri signer generate` |
+| `TAURI_SIGNING_PRIVATE_KEY` | The **raw contents** of `zakhira-updater.key` — see warning below |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password you set for that key |
 
 `GITHUB_TOKEN` is provided automatically — do not create it.
+
+> ⚠️ **Do not base64-encode the Tauri key.** The file `tauri signer generate`
+> writes is *already* base64. Encoding it again — and picking up the trailing
+> newline that `base64` appends — makes the build fail after a full successful
+> compile with `failed to decode base64 secret key: Invalid symbol 10`.
+> Set it straight from the file, which also avoids clipboard newline mangling:
+>
+> ```sh
+> gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/zakhira-keys/zakhira-updater.key
+> ```
+>
+> The Android keystore is the opposite case — a `.jks` is binary, so it *must*
+> be base64-encoded.
 
 ---
 
