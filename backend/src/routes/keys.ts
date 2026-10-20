@@ -21,15 +21,21 @@ async function rowToApiKey(
           where: eq(schema.apiKeyOperations.apiKeyId, row.id),
         })
       : [];
-  return {
+  const key: ApiKey = {
     id: row.id,
     name: row.name,
     scope: row.scope as ApiKey["scope"],
     lastUsedAt: row.lastUsedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    operationIds: row.scope === "scoped" ? opRows.map((r) => r.operationId) : undefined,
   };
+  // `operationIds` is optional, and exactOptionalPropertyTypes forbids setting
+  // it to undefined explicitly — so omit the key instead. JSON.stringify drops
+  // undefined values anyway, so the response body is unchanged.
+  if (row.scope === "scoped") {
+    key.operationIds = opRows.map((r) => r.operationId);
+  }
+  return key;
 }
 
 // GET /keys
@@ -87,6 +93,7 @@ app.post("/", async (c) => {
   }
 
   const row = await db.query.apiKeys.findFirst({ where: eq(schema.apiKeys.id, id) });
+  if (!row) return c.json({ ok: false, error: "Failed to create key" }, 500);
   const key = await rowToApiKey(db, row);
   return c.json({ ok: true, data: { key, plaintext } }, 201);
 });

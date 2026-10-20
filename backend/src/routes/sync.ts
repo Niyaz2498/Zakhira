@@ -16,20 +16,19 @@ app.get("/", async (c) => {
   const since = c.req.query("since");
   const db = drizzle(c.env.DB, { schema }) as AppDB;
 
-  let opsQuery = db.query.operations.findMany(
-    since ? { where: gte(schema.operations.updatedAt, since) } : {}
-  );
-  let tasksQuery = db.query.tasks.findMany(
-    since ? { where: gte(schema.tasks.updatedAt, since) } : {}
-  );
-  let remindersQuery = db.query.reminders.findMany(
-    since ? { where: gte(schema.reminders.updatedAt, since) } : {}
-  );
-
+  // Each branch calls findMany with a concrete argument rather than passing a
+  // `{ where } | {}` union — drizzle's KnownKeysOnly constraint rejects the
+  // union, since `{}` is missing the `where` key the other half declares.
   const [opRows, taskRows, reminderRows] = await Promise.all([
-    opsQuery,
-    tasksQuery,
-    remindersQuery,
+    since
+      ? db.query.operations.findMany({ where: gte(schema.operations.updatedAt, since) })
+      : db.query.operations.findMany(),
+    since
+      ? db.query.tasks.findMany({ where: gte(schema.tasks.updatedAt, since) })
+      : db.query.tasks.findMany(),
+    since
+      ? db.query.reminders.findMany({ where: gte(schema.reminders.updatedAt, since) })
+      : db.query.reminders.findMany(),
   ]);
 
   // Apply auth scope filtering

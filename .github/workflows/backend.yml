@@ -1,0 +1,185 @@
+name: Backend
+
+# The backend is a single live Cloudflare Worker, so it deploys continuously
+# rather than on a tag: merging to main publishes it. (The apps are different —
+# they ship on a vX.Y.Z tag via release.yml, because users install artifacts.)
+#
+# The practical consequence: the Worker can be ahead of every installed app, so
+# schema and API changes must stay backward-compatible with the last released
+# APK / .dmg. Additive columns and new endpoints are safe; renaming or removing
+# a field that a shipped client reads is not.
+on:
+  push:
+    branches: [main]
+    # Kept in sync with the pull_request list below by hand — GitHub Actions
+    # does not support YAML anchors.
+    paths:
+      - "backend/**"
+      - "packages/core/**"
+      - "pnpm-lock.yaml"
+      - "tsconfig.base.json"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "packages/core/**"
+      - "pnpm-lock.yaml"
+      - "tsconfig.base.json"
+      - ".github/workflows/backend.yml"
+  # Lets you re-deploy the current main without an empty commit — useful after
+  # rotating a Worker secret, or to recover from a half-failed deploy.
+  workflow_dispatch:
+
+# A Worker has one live version, so overlapping deploys would race. Queue
+# pushes to main instead of cancelling (a cancelled deploy could leave
+# migrations applied with the old code live); cancel superseded PR checks.
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "24"
+  PNPM_VERSION: "9.0.0"
+
+jobs:
+  # ── Validate: runs on PRs and on main, and gates the deploy ────────────────
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed for the migration-immutability check below, which diffs
+          # against the merge base.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # packages/core is consumed as source (`main: ./src/index.ts`), so its
+      # types are part of the backend's compile.
+      - name: Typecheck
+        run: pnpm --filter @zakhira/backend --filter @zakhira/core typecheck
+
+      # tsc does not bundle, so it misses what only esbuild sees: an unresolved
+      # import, a dependency missing from backend/package.json, or a module that
+      # needs a compatibility flag the Worker doesn't have. --dry-run builds the
+      # exact upload bundle and needs no Cloudflare credentials.
+      - name: Build Worker bundle
+        working-directory: backend
+        run: pnpm exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"
+
+      # Applies every migration to an empty local SQLite D1. Catches invalid SQL
+      # and ordering mistakes here rather than against production, where a
+      # failed migration leaves the database partway through the sequence.
+      - name: Apply migrations to a fresh database
+        working-directory: backend
+        run: pnpm exec wrangler d1 migrations apply zakhira-db --local --persist-to "$RUNNER_TEMP/d1-fresh"
+
+      # D1 records migrations by filename. Editing a file that has already been
+      # applied to production is a silent no-op — the change never runs, and
+      # local and remote schemas drift apart with nothing failing. New schema
+      # work must go in a new numbered file.
+      - name: Check applied migrations were not edited
+        if: github.event_name == 'pull_request'
+        run: |
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")
+          touched=$(git diff --name-only --diff-filter=MDR "$base" HEAD -- backend/migrations)
+          if [ -n "$touched" ]; then
+            echo "::error::Existing migration files were modified, renamed or deleted:"
+            echo "$touched"
+            echo "D1 tracks migrations by filename, so an edit to an already-applied"
+            echo "file never executes. Add a new NNNN_*.sql file instead."
+            exit 1
+          fi
+          echo "No existing migrations were touched."
+
+  # ── Deploy: main and manual runs only ─────────────────────────────────────
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Referencing an environment lets you add required reviewers or a branch
+    # rule in repo settings later without touching this file. GitHub creates it
+    # on first run.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: List pending migrations
+        working-directory: backend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler d1 migrations list zakhira-db --remote
+
+      # Migrations run before the deploy so new code never sees an old schema.
+      # This ordering assumes additive migrations — if you ever need to drop or
+      # rename a column, deploy tolerant code first, then migrate in a second
+      # pass, or the currently-live Worker will break mid-deploy.
+      #
+      # Wrangler skips its confirmation prompt when CI is set (Actions sets it),
+      # and captures a backup before applying.
+      - name: Apply migrations to production D1
+        working-directory: backend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler d1 migrations apply zakhira-db --remote
+
+      # Worker secrets (ADMIN_SECRET, JWT_SECRET) are stored by Cloudflare and
+      # survive a deploy, so CI neither holds nor sets them. Set them once with
+      # `wrangler secret put` — see DEPLOY.md.
+      - name: Deploy Worker
+        working-directory: backend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler deploy
+
+      # A successful `wrangler deploy` only means Cloudflare accepted the
+      # bundle. This confirms the Worker actually boots and can answer — a
+      # missing secret or a bad binding shows up here, not above.
+      - name: Smoke-test /health
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+        run: |
+          if [ -z "$BACKEND_URL" ]; then
+            echo "::warning::Repository variable BACKEND_URL is not set — skipping smoke test."
+            exit 0
+          fi
+          url="${BACKEND_URL%/}/health"
+          echo "Probing $url"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsS --max-time 15 -o "$RUNNER_TEMP/health.json" "$url" \
+               && grep -q '"ok":true' "$RUNNER_TEMP/health.json"; then
+              echo "Health check passed:"
+              cat "$RUNNER_TEMP/health.json"
+              exit 0
+            fi
+            echo "Attempt $attempt failed; retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::/health did not return ok:true after the deploy."
+          cat "$RUNNER_TEMP/health.json" 2>/dev/null || true
+          exit 1

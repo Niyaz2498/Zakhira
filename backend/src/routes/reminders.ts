@@ -87,6 +87,7 @@ app.post("/", async (c) => {
   const row = await db.query.reminders.findFirst({
     where: eq(schema.reminders.id, id),
   });
+  if (!row) return c.json({ ok: false, error: "Failed to create reminder" }, 500);
   return c.json({ ok: true, data: rowToReminder(row) }, 201);
 });
 
@@ -133,6 +134,7 @@ app.patch("/:id", async (c) => {
   const updated = await db.query.reminders.findFirst({
     where: eq(schema.reminders.id, id),
   });
+  if (!updated) return c.json({ ok: false, error: "Failed to update reminder" }, 500);
   return c.json({ ok: true, data: rowToReminder(updated) });
 });
 
