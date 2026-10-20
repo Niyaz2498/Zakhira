@@ -1,5 +1,19 @@
 # Releasing Zakhira
 
+Zakhira has **two** pipelines, because its two halves ship differently:
+
+| | Trigger | Workflow |
+|---|---|---|
+| **Apps** (Android + macOS) | push a `vX.Y.Z` tag | [`release.yml`](../.github/workflows/release.yml) |
+| **Backend** (Worker + D1) | merge to `main` | [`backend.yml`](../.github/workflows/backend.yml) |
+
+The rest of this section covers the apps. For the backend, skip to
+[The backend deploys from main](#the-backend-deploys-from-main).
+
+---
+
+## Releasing the apps
+
 Pushing a git tag builds and publishes both apps. Nothing is built by hand.
 
 ```sh
@@ -58,6 +72,65 @@ throws rather than silently producing a non-increasing code if you cross it.
 
 ---
 
+## The backend deploys from main
+
+There is no backend tag. The Worker is a single live deployment, so
+[`backend.yml`](../.github/workflows/backend.yml) deploys it whenever `main`
+changes under `backend/**` or `packages/core/**`:
+
+1. **check** — typecheck, build the Worker bundle, and apply every migration to
+   an empty database. Runs on PRs too, and gates the deploy.
+2. **deploy** — apply pending migrations to production D1, `wrangler deploy`,
+   then smoke-test `/health`.
+
+Nothing deploys from a PR. Use **Actions → Backend → Run workflow** to
+re-deploy the current `main` without an empty commit — useful after rotating a
+Worker secret.
+
+### The Worker can be ahead of every installed app
+
+This is the one thing to keep in mind. Phones and desktops update on their own
+schedule (or not at all), so a deployed backend must still answer the **last
+released** APK and `.dmg`. Adding a column or an endpoint is safe. Renaming or
+removing a field a shipped client reads is not — it breaks installed apps with
+no way to roll them forward.
+
+When you genuinely need a breaking change, split it across two deploys: ship a
+backend that tolerates both shapes, release the apps, then remove the old shape
+once the clients have moved.
+
+### Migrations are append-only
+
+D1 records migrations by **filename**. Editing a file that has already been
+applied is a silent no-op — the change never runs, and local and production
+schemas drift with nothing failing. CI fails a PR that modifies, renames or
+deletes an existing migration; add a new `NNNN_*.sql` instead.
+
+Migrations run **before** the deploy, so new code never meets an old schema.
+That ordering assumes additive migrations — see the two-deploy split above for
+anything destructive.
+
+### Worker secrets are not in CI
+
+`ADMIN_SECRET` and `JWT_SECRET` live in Cloudflare and survive a deploy, so the
+workflow neither holds nor sets them. Set them once with `wrangler secret put`
+(see [DEPLOY.md](../DEPLOY.md)). The `/health` smoke test is what catches a
+missing one.
+
+### If a backend deploy fails
+
+Unlike a release, there is nothing to delete — just fix forward on `main`. Which
+step failed tells you where you stand:
+
+| Failed at | State | What to do |
+|---|---|---|
+| **check** | Nothing deployed | Fix and push. Production untouched. |
+| **migrations** | Partly migrated; old code still live | Wrangler rolls back the failing migration and keeps the previous one applied. Fix the SQL in a **new** file and push. |
+| **deploy** | Migrated, old code live | Push the fix; additive migrations leave the old code working meanwhile. |
+| **smoke test** | New code live but not answering | Check Worker secrets and `wrangler tail`. Revert the commit if it's not a quick fix. |
+
+---
+
 ## One-time setup
 
 ### 1. Generate the Android keystore
@@ -110,6 +183,8 @@ the keystore breaks Android updates.
 
 Repo → **Settings → Secrets and variables → Actions → New repository secret**.
 
+For the **apps** (`release.yml`):
+
 | Secret | What it is |
 |---|---|
 | `ANDROID_KEYSTORE_BASE64` | Output of `base64 -i zakhira-release.jks` |
@@ -119,7 +194,44 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 | `TAURI_SIGNING_PRIVATE_KEY` | The **raw contents** of `zakhira-updater.key` — see warning below |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password you set for that key |
 
+For the **backend** (`backend.yml`):
+
+| Secret | What it is |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | API token scoped to Workers + D1 — see below |
+| `CLOUDFLARE_ACCOUNT_ID` | `wrangler whoami` prints it |
+
+And one repository **variable** (same page, *Variables* tab — not a secret, it
+appears in logs):
+
+| Variable | What it is |
+|---|---|
+| `BACKEND_URL` | `https://zakhira-backend.<your-subdomain>.workers.dev` |
+
+`BACKEND_URL` is only used by the post-deploy `/health` smoke test. Leave it
+unset and the deploy still runs — the step warns and skips, so you lose the
+check that the Worker actually boots.
+
 `GITHUB_TOKEN` is provided automatically — do not create it.
+
+#### Creating the Cloudflare API token
+
+Cloudflare dashboard → **My Profile → API Tokens → Create Token → Create Custom
+Token**. `wrangler login` credentials are user-interactive and won't work in CI.
+
+Permissions:
+
+| Type | Resource | Access |
+|---|---|---|
+| Account | Workers Scripts | Edit |
+| Account | D1 | Edit |
+
+Scope **Account Resources** to your account only. Nothing else is needed — in
+particular do not grant Zone permissions.
+
+> The token can deploy code and run migrations against your production
+> database. If it leaks, revoke it in the same dashboard and create a new one;
+> nothing in the repo pins its value.
 
 > ⚠️ **Do not base64-encode the Tauri key.** The file `tauri signer generate`
 > writes is *already* base64. Encoding it again — and picking up the trailing

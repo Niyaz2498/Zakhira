@@ -5,9 +5,13 @@ Zakhira has three parts:
 - **Desktop app** — a Tauri native app (macOS/Windows/Linux)
 - **Mobile app** — a sideloaded Android APK
 
-> **Shipping a new version?** Don't follow this file — push a `vX.Y.Z` tag and CI
-> builds and publishes both apps. See [docs/RELEASING.md](docs/RELEASING.md).
-> The manual steps below are for first-time setup and local builds.
+> **Shipping a new version?** Don't follow this file.
+>
+> - **Apps** — push a `vX.Y.Z` tag and CI builds and publishes both.
+> - **Backend** — merge to `main` and CI migrates D1 and deploys the Worker.
+>
+> See [docs/RELEASING.md](docs/RELEASING.md). The manual steps below are for
+> first-time setup and local builds.
 
 ---
 
@@ -211,6 +215,11 @@ The APK lands at `app/build/outputs/apk/release/app-release.apk`.
 ## Updating
 
 ### Backend
+
+Merge to `main`. CI applies pending D1 migrations, deploys the Worker and
+smoke-tests `/health` — see [docs/RELEASING.md](docs/RELEASING.md#the-backend-deploys-from-main).
+
+The manual equivalent, for a first deploy or if you need to bypass CI:
 
 ```sh
 cd backend

@@ -109,8 +109,8 @@ app.post("/", async (c) => {
   const body = await c.req.json<{
     title: string;
     operationId: string;
-    type: "main" | "side" | "exploration";
-    state?: string;
+    type: Task["type"];
+    state?: Task["state"];
     startDate?: string;
     endDate?: string;
     importance?: number;
@@ -182,8 +182,8 @@ app.patch("/:id", async (c) => {
   const body = await c.req.json<{
     title?: string;
     operationId?: string;
-    type?: string;
-    state?: string;
+    type?: Task["type"];
+    state?: Task["state"];
     startDate?: string | null;
     endDate?: string | null;
     importance?: number | null;
