@@ -3,7 +3,7 @@ import { ThemeProvider, useTheme } from "./theme/ThemeContext";
 import { loadFromStore, sync, logout } from "./store";
 import { useStore } from "./store/useStore";
 import { Dashboard } from "./screens/Dashboard";
-import { Operations } from "./screens/Operations";
+import { Groups } from "./screens/Groups";
 import { RemindersScreen } from "./screens/Reminders";
 import { Settings } from "./screens/Settings";
 import { Setup } from "./screens/Setup";
@@ -11,7 +11,7 @@ import { TaskHistory } from "./screens/TaskHistory";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { checkForUpdate } from "./updater";
 
-type Screen = "dashboard" | "operations" | "reminders" | "history" | "settings";
+type Screen = "dashboard" | "groups" | "reminders" | "history" | "settings";
 
 function Shell() {
   const { tokens, theme, toggleTheme } = useTheme();
@@ -31,7 +31,7 @@ function Shell() {
 
   const navItems: { key: Screen; label: string; icon: string }[] = [
     { key: "dashboard", label: "Dashboard", icon: "⊞" },
-    { key: "operations", label: "Operations", icon: "⊛" },
+    { key: "groups", label: "Groups", icon: "⊛" },
     { key: "reminders", label: "Reminders", icon: "◷" },
     { key: "history", label: "Task History", icon: "⊟" },
     { key: "settings", label: "Settings", icon: "⚙" },
@@ -127,7 +127,7 @@ function Shell() {
       <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <UpdateBanner />
         {screen === "dashboard" && <Dashboard />}
-        {screen === "operations" && <Operations />}
+        {screen === "groups" && <Groups />}
         {screen === "reminders" && <RemindersScreen />}
         {screen === "history" && <TaskHistory />}
         {screen === "settings" && <Settings />}

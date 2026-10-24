@@ -13,9 +13,14 @@ import { useTheme } from "../../src/theme/ThemeContext";
 import { useStore } from "../../src/store/useStore";
 import { sync } from "../../src/store";
 import { TaskDetailModal } from "../../src/components/TaskDetailModal";
+import {
+  buildGroupTree,
+  flattenGroupTree,
+  ancestorGroupIds,
+} from "@zakhira/core";
 import type { Task } from "@zakhira/core";
 
-type GroupBy = "type" | "operation" | "status";
+type GroupBy = "type" | "group" | "status";
 
 const TYPE_LABELS: Record<string, string> = {
   main: "Main Quests",
@@ -91,7 +96,7 @@ const statStyles = StyleSheet.create({
 
 // ── Task tile ────────────────────────────────────────────────────────────────
 
-function TaskTile({ task, opName, tokens, onPress }: { task: Task; opName: string; tokens: any; onPress: () => void }) {
+function TaskTile({ task, groupName, tokens, onPress }: { task: Task; groupName: string; tokens: any; onPress: () => void }) {
   const overdue = isOverdue(task);
   const priority = task.importance != null ? PRIORITY_LABEL[task.importance] : null;
   const priorityColor = task.importance != null ? PRIORITY_COLOR[task.importance] : null;
@@ -116,7 +121,7 @@ function TaskTile({ task, opName, tokens, onPress }: { task: Task; opName: strin
     >
       <View style={tileStyles.row}>
         <Text style={[tileStyles.meta, { color: tokens.textTertiary }]} numberOfLines={1}>
-          {TYPE_ICONS[task.type]} {opName}
+          {TYPE_ICONS[task.type]} {groupName}
         </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           {overdue && <View style={tileStyles.overdueDot} />}
@@ -181,9 +186,9 @@ export default function DashboardScreen() {
     setSelectedTask(updated);
   }, []);
 
-  const opMap = useMemo(
-    () => new Map(store.operations.map((o) => [o.id, o.name])),
-    [store.operations]
+  const groupNames = useMemo(
+    () => new Map(store.groups.map((g) => [g.id, g.name])),
+    [store.groups]
   );
 
   const activeTasks = useMemo(
@@ -214,7 +219,7 @@ export default function DashboardScreen() {
     };
   }, [store.tasks]);
 
-  const groups = useMemo(() => {
+  const sections = useMemo(() => {
     if (groupBy === "type") {
       return (["main", "side", "exploration"] as const)
         .map((type) => ({ key: type, title: TYPE_LABELS[type]!, data: activeTasks.filter((t) => t.type === type) }))
@@ -225,10 +230,18 @@ export default function DashboardScreen() {
         .map((s) => ({ key: s, title: STATUS_GROUP_LABEL[s]!, data: activeTasks.filter((t) => t.state === s) }))
         .filter((g) => g.data.length > 0);
     }
-    return store.operations
-      .map((op) => ({ key: op.id, title: op.name, data: activeTasks.filter((t) => t.operationId === op.id) }))
-      .filter((g) => g.data.length > 0);
-  }, [groupBy, activeTasks, store.operations]);
+    // Tree order, each heading showing its full path, so a nested section sits
+    // under its parent and two same-named sub-groups stay distinct.
+    return flattenGroupTree(buildGroupTree(store.groups))
+      .map(({ group }) => ({
+        key: group.id,
+        title: [...ancestorGroupIds(group.id, store.groups).reverse(), group.id]
+          .map((id) => groupNames.get(id) ?? "")
+          .join(" › "),
+        data: activeTasks.filter((t) => t.groupId === group.id),
+      }))
+      .filter((sec) => sec.data.length > 0);
+  }, [groupBy, activeTasks, store.groups, groupNames]);
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
@@ -307,14 +320,14 @@ export default function DashboardScreen() {
               Active <Text style={{ color: tokens.textTertiary, fontWeight: "400" }}>{activeTasks.length}</Text>
             </Text>
             <View style={[s.toggle, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}>
-              {(["type", "operation", "status"] as GroupBy[]).map((g) => (
+              {(["type", "group", "status"] as GroupBy[]).map((g) => (
                 <TouchableOpacity
                   key={g}
                   style={[s.toggleBtn, groupBy === g && { backgroundColor: tokens.accent }]}
                   onPress={() => setGroupBy(g)}
                 >
                   <Text style={{ fontSize: 11, fontWeight: "600", color: groupBy === g ? tokens.accentOn : tokens.textSecondary }}>
-                    {g === "type" ? "Type" : g === "operation" ? "Op" : "Status"}
+                    {g === "type" ? "Type" : g === "group" ? "Group" : "Status"}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -323,27 +336,27 @@ export default function DashboardScreen() {
 
           {/* Task groups */}
           <View style={{ padding: 16, paddingTop: 12 }}>
-            {groups.length === 0 && (
+            {sections.length === 0 && (
               <View style={s.empty}>
                 <Text style={{ color: tokens.textTertiary, fontSize: 16 }}>No active tasks</Text>
                 <Text style={{ color: tokens.textTertiary, fontSize: 13, marginTop: 4 }}>
-                  Create tasks from Operations
+                  Create tasks from Groups
                 </Text>
               </View>
             )}
-            {groups.map((group) => (
-              <View key={group.key} style={{ marginBottom: 24 }}>
+            {sections.map((section) => (
+              <View key={section.key} style={{ marginBottom: 24 }}>
                 <Text style={[s.groupTitle, { color: tokens.textSecondary }]}>
-                  {group.title}
+                  {section.title}
                   {"  "}
-                  <Text style={{ color: tokens.textTertiary, fontWeight: "400" }}>{group.data.length}</Text>
+                  <Text style={{ color: tokens.textTertiary, fontWeight: "400" }}>{section.data.length}</Text>
                 </Text>
                 <View style={s.bento}>
-                  {group.data.map((task) => (
+                  {section.data.map((task) => (
                     <TaskTile
                       key={task.id}
                       task={task}
-                      opName={opMap.get(task.operationId) ?? ""}
+                      groupName={groupNames.get(task.groupId) ?? ""}
                       tokens={tokens}
                       onPress={() => setSelectedTask(task)}
                     />
@@ -357,7 +370,7 @@ export default function DashboardScreen() {
 
       <TaskDetailModal
         task={selectedTask}
-        opName={selectedTask ? (opMap.get(selectedTask.operationId) ?? "") : ""}
+        groupName={selectedTask ? (groupNames.get(selectedTask.groupId) ?? "") : ""}
         tokens={tokens}
         onClose={() => setSelectedTask(null)}
         onTaskUpdated={handleTaskUpdated}

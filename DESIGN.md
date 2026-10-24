@@ -6,7 +6,7 @@ A personal task + reminder system with an RPG-flavored "quest" framing. Cross-pl
 
 ## 1. Product concept
 
-Zakhira ("repository" / store of knowledge) is a single-user task manager organized around **operations** (groupings) that contain **tasks** (quests), plus standalone **reminders**. The distinguishing features versus off-the-shelf tools are: enforced task **dependencies** (prerequisites), an **operation-completion rule**, and **API-key-only auth with per-operation scoping** (so machine clients like Home Assistant / MCP can be granted isolated access).
+Zakhira ("repository" / store of knowledge) is a single-user task manager organized around **groups** that contain **tasks** (quests) and, recursively, other groups, plus standalone **reminders**. The distinguishing features versus off-the-shelf tools are: enforced task **dependencies** (prerequisites), a **group-completion rule** that rolls up the tree, and **API-key-only auth with per-group scoping** (so machine clients like Home Assistant / MCP can be granted isolated access).
 
 The app is built primarily for the author's own use, with the code released publicly under the MIT license.
 
@@ -14,14 +14,24 @@ The app is built primarily for the author's own use, with the code released publ
 
 ## 2. Core domain model
 
-### Operations
+### Groups
 - A grouping of tasks (e.g. "Computer Vision", "Deep RL", "Immigration").
-- **Rich object**: has name, optional description/notes, optional start/end dates, optional importance.
-- **General Tasks** is an implicit default operation. Any task created without choosing an operation lands here. It always exists, cannot be deleted, and has no main-quest progress (it shows a task count only, no progress bar).
-- An operation is considered **complete when all its Main quest tasks are complete**. Side quests and Exploration tasks do NOT gate operation completion.
+- **Rich object**: has name, optional description/notes, optional start/end dates, optional importance, and an optional **parent group**.
+- **Groups nest to any depth.** A group's children are tasks and sub-groups side by side:
+  ```
+  Group_a
+      Task_1
+      group_b
+          task_2
+          task_3
+  ```
+  There is no depth cap; the constraint is structural, not numeric — a group **cannot be moved inside itself or one of its own descendants** (`wouldCreateGroupCycle`). The backend MUST reject such a re-parent, because API clients bypass the UI.
+- **General Tasks** is an implicit default group. Any task created without choosing a group lands here. It always exists, cannot be deleted, and has no main-quest progress (it shows a task count only, no progress bar). It stays a **flat top-level inbox**: it cannot be nested, and it cannot hold sub-groups.
+- A group is considered **complete when all the Main quest tasks in it *and in every sub-group beneath it* are complete** — progress rolls up the tree, so a parent cannot read "complete" while a sub-group still has open main quests. Side quests and Exploration tasks do NOT gate group completion. A group with no main quests anywhere in its subtree is never complete.
+- The API returns groups **flat, with parent pointers**; clients build the tree via `buildGroupTree` in `packages/core` so both platforms nest and order identically (default group first, then by name, at every level).
 
 ### Tasks
-- Belong to exactly one operation (General Tasks if unspecified).
+- Belong to exactly one group — at any depth, parent or leaf alike (General Tasks if unspecified).
 - **States**: To-Do, In-Progress, Blocked, Completed, Scrapped ("won't do").
 - **Types**: Main quest, Side quest, Exploration (research).
 - **Optional fields**: start date, end date, importance, notes, reminder time.
@@ -30,10 +40,10 @@ The app is built primarily for the author's own use, with the code released publ
 ### Dependencies (prerequisites)
 - A task can be **blocked by** one or more other tasks ("prerequisites").
 - Set at **task level**, via a "blocked by" multi-select picker in the create/edit task form.
-- The picker is **scoped to the same operation** — a task can only be blocked by other tasks in its own operation. No cross-operation prerequisites.
+- The picker is **scoped to the same group** — a task can only be blocked by other tasks in its own group. No cross-group prerequisites, and nesting does **not** widen this: a task in `group_b` cannot be blocked by `Task_1` in its parent `Group_a`.
 - A task **cannot be marked Complete while any prerequisite is still open** (not Completed/Scrapped).
 - The dependency graph **must remain acyclic**. The UI hides the task itself and any choice that would create a cycle; the backend MUST also reject any edit that introduces a cycle (because API clients bypass the UI).
-- If a task is moved to a different operation, its existing prerequisites become invalid → **clear prerequisites on operation change, with a warning**.
+- If a task is moved to a different group, its existing prerequisites become invalid → **clear prerequisites on group change, with a warning**.
 
 ### Reminders
 - Two sources: **standalone** reminders (e.g. a birthday) and **task reminders** (a task's reminder time).
@@ -60,10 +70,10 @@ Reminders fire **client-side as local OS notifications**, not via server push.
 
 **API-key-only. No user accounts, no server-side passwords, no sessions.**
 
-- Every request authenticates with `Authorization: Bearer <key>`. Backend: resolve key → resolve allowed operations → authorize against the target resource's operation.
+- Every request authenticates with `Authorization: Bearer <key>`. Backend: resolve key → resolve allowed groups → authorize against the target resource's group.
 - **Keys are generated on the backend only** (cryptographically random). Returned to the client **once** at creation; the server stores only a **hash** of the key (never plaintext). On each request, hash the presented key and compare.
-- **Key scope**: a key maps to either *all operations* (full-access) or a specific **set of operations**. Many-to-many: one key → many operations, one operation → many keys.
-- **No per-action scopes** (no read/write/complete/scrap distinction) for now. Trust is expressed purely by *which operations a key can see*. (A permissions column can be added later if a genuinely untrusted client appears — design the join table so it's addable, but don't build it now.)
+- **Key scope**: a key maps to either *all groups* (full-access) or a specific **set of groups**. Many-to-many: one key → many groups, one group → many keys. Scoping is an explicit list of group IDs, not a subtree — granting a parent does **not** implicitly grant its children.
+- **No per-action scopes** (no read/write/complete/scrap distinction) for now. Trust is expressed purely by *which groups a key can see*. (A permissions column can be added later if a genuinely untrusted client appears — design the join table so it's addable, but don't build it now.)
 - **First key bootstrap (LOCKED — first-run-open)**: the create-key endpoint requires no auth **only while the database has zero keys**. The moment the first key exists, the endpoint permanently rejects unauthenticated requests. Use it once on first deploy to mint the first full-access key. All subsequent keys (e.g. a scoped Home Assistant key) are minted from Settings while authed with an existing full-access key.
 
 ### Device-local lock (separate from backend auth)
@@ -73,8 +83,8 @@ Reminders fire **client-side as local OS notifications**, not via server push.
 - **Optional hardening (later)**: encrypt the stored key with a passcode-derived key (PBKDF2/Argon2) so a rooted-device storage dump is useless without the passcode.
 
 ### Example key setup
-- **Full-access key** → all operations. Lives in the Mac app and the phone.
-- **Scoped key** → only "Home" operation. Lives in Home Assistant. Can create/edit within that operation; can't see anything else.
+- **Full-access key** → all groups. Lives in the Mac app and the phone.
+- **Scoped key** → only the "Home" group. Lives in Home Assistant. Can create/edit within that group; can't see anything else.
 
 ---
 
@@ -82,32 +92,32 @@ Reminders fire **client-side as local OS notifications**, not via server push.
 
 ### Menu panel (desktop sidebar / mobile drawer)
 - Header: app name + "Welcome back, {name}".
-- Items: **Dashboard** (default), **Operations**, **Reminders**, **Settings**.
+- Items: **Dashboard** (default), **Groups**, **Reminders**, **Settings**.
 
 ### Dashboard
-- **Group by** toggle: **Task Type** or **Operation**.
+- **Group by** toggle: **Task Type** or **Group**.
   - By Task Type → three sections: Main quests, Side quests, Exploration.
-  - By Operation → one section per operation, section header = operation name.
+  - By Group → one section per group in tree order, section header = the group's full path (`Group_a › group_b`), so a nested section sits under its parent and two same-named sub-groups stay distinct.
 - **Bento grid** of task tiles. Each tile: task name, due date (if present), priority, and a state dot.
 - **Metal-tier borders** by type: Main = **gold**, Side = **silver**, Exploration = **bronze**.
-- Completed/Scrapped tasks are **hidden** from the dashboard (it answers "what do I do now"). They are viewable inside each operation via a "Show completed/scrapped" toggle (see section 9).
+- Completed/Scrapped tasks are **hidden** from the dashboard (it answers "what do I do now"). They are viewable inside each group via a "Show completed/scrapped" toggle (see section 9).
 
 ### Task modal (on tile click)
 - Opens on a dimmed backdrop, capped to viewport height.
-- **Fixed** regions: header (title + type icon + close), badge row (state, type, priority, operation), meta strip (dates, reminder), prerequisites block, footer actions.
+- **Fixed** regions: header (title + type icon + close), badge row (state, type, priority, group), meta strip (dates, reminder), prerequisites block, footer actions.
 - **Scrollable** region: Notes only.
 - Footer actions: **Complete**, **Block**, **Edit** on the left; **Scrap** pushed to the right (separated from Complete to avoid misclicks).
 - **Complete is disabled** when any prerequisite is still open, with a hint ("finish prerequisites first").
 - Modal outer border = task's tier color (optional; can be neutral instead).
 - **Scrap requires confirmation** (hard to undo).
 
-### Operations
-- **List view**: cards. General Tasks pinned at top (default tag, lock icon, task count, no progress bar). Real operations show importance badge, end date, and "X of Y main quests done" progress bar. "New" creates an operation (rich form: name, description, dates, importance).
-- **Drill-in**: a single operation's task list (three-pane on desktop, drill-down on mobile per the anchor set).
+### Groups
+- **List view**: a **tree** of cards, indented by depth, with a collapse caret on any group that has sub-groups (the caret is its own touch/click target, so collapsing never drills in). General Tasks pinned at top (default tag, lock icon, task count, no progress bar). Real groups show importance badge, end date, sub-group count, and a rolled-up "X of Y main quests done" progress bar. "New" creates a group (rich form: name, **parent group**, description, dates, importance); a per-row "+ Subgroup" pre-selects that row as parent.
+- **Drill-in**: a single group's view lists its **sub-groups** (tappable, each with its own rolled-up progress) above its **own direct tasks**, plus group actions: add sub-group, move, delete. Prerequisites are same-group scoped, so the direct-task list is also exactly the set a task here can be blocked by.
 
 ### Task create/edit form
-- Fields: Title, Operation (select), Type (Main/Side/Exploration), **Blocked by** (prerequisite multi-select picker), Dates (optional), Importance, Reminder (optional, hour precision), Notes (optional).
-- Blocked-by picker: selected items shown as removable chips; remaining same-operation tasks listed below; the task itself and cycle-creating tasks are disabled and labeled ("this task" / "would loop").
+- Fields: Title, Group (select, shown in tree order and indented by depth), Type (Main/Side/Exploration), **Blocked by** (prerequisite multi-select picker), Dates (optional), Importance, Reminder (optional, hour precision), Notes (optional).
+- Blocked-by picker: selected items shown as removable chips; remaining same-group tasks listed below; the task itself and cycle-creating tasks are disabled and labeled ("this task" / "would loop").
 - Editing is allowed any time before Completed/Scrapped.
 - **Edit interaction: inline** — the task modal switches to an in-place edit mode; fields (including the blocked-by picker) become editable where they sit. No separate edit form. Validation and cycle-prevention apply in edit mode too.
 
@@ -200,12 +210,12 @@ Lock these as shared tokens used app-wide (dashboard dots, modal badges, list ro
 - **Future**: MCP server wrapping the REST API for Home Assistant / agent integration — keep the REST surface clean and the API-key middleware the single auth path.
 
 ### Backend detail (Cloudflare Workers + D1 + Drizzle + Hono)
-- **Router**: Hono inside the Worker. Auth is one `app.use()` middleware running before every route: read `Authorization: Bearer`, hash, look up in `api_keys`, resolve allowed operations, authorize against the target resource's operation.
+- **Router**: Hono inside the Worker. Auth is one `app.use()` middleware running before every route: read `Authorization: Bearer`, hash, look up in `api_keys`, resolve allowed groups, authorize against the target resource's group.
 - **ORM**: Drizzle (SQLite dialect) with `drizzle-kit` for migrations; apply via Wrangler to both local (Miniflare) and remote D1.
 - **Key hashing**: API keys are high-entropy random strings → hash with **SHA-256** (fast; Workers have per-request CPU limits, bcrypt/Argon2 would be wrong here). The optional **device passcode** is low-entropy/human → if ever hashed, use a slow KDF, and it's client-side anyway. Do not conflate the two.
 - **IDs**: generate in the Worker with `crypto.randomUUID()` (no Postgres `gen_random_uuid()` in SQLite).
 - **Types/quirks (SQLite)**: booleans stored as integers; timestamps stored consistently (ISO string or epoch int) — `updated_at` drives delta sync. Enable `PRAGMA foreign_keys=ON`.
-- **Cycle detection**: implemented as a pure TS depth-first check in `packages/core`, shared by client (picker greying) and Worker (reject bad writes). Preferred over recursive SQL for these small per-operation graphs.
+- **Cycle detection**: implemented as pure TS depth-first checks in `packages/core`, shared by client (picker greying) and Worker (reject bad writes) — `wouldCreateCycle` for task prerequisites, `wouldCreateGroupCycle` for the group tree. Preferred over recursive SQL for these small per-group graphs.
 - **Business logic** (completion gating, "all main quests done", cycle check) lives in `packages/core` and is enforced authoritatively in the Worker; clients reuse it for optimistic UI.
 
 ### Sync model
@@ -214,17 +224,21 @@ Lock these as shared tokens used app-wide (dashboard dots, modal badges, list ro
 - Keeps D1 row-reads tiny (avoids re-reading all rows each poll) — important for staying within free-tier read limits.
 
 ### Schema (tables)
-- `operations` — id, name, description, start_date?, end_date?, importance?, is_default (General Tasks), timestamps.
-- `tasks` — id, operation_id (FK), title, type (main|side|exploration), state (todo|in_progress|blocked|completed|scrapped), start_date?, end_date?, importance?, notes?, reminder_id?, timestamps.
-- `task_dependencies` — task_id (FK tasks), prerequisite_id (FK tasks). Both in same operation; graph must stay acyclic.
+- `groups` — id, name, description, **parent_id? (self-FK; NULL = top level)**, start_date?, end_date?, importance?, is_default (General Tasks), timestamps.
+- `tasks` — id, group_id (FK), title, type (main|side|exploration), state (todo|in_progress|blocked|completed|scrapped), start_date?, end_date?, importance?, notes?, reminder_id?, timestamps.
+- `task_dependencies` — task_id (FK tasks), prerequisite_id (FK tasks). Both in same group; graph must stay acyclic.
 - `reminders` — id, task_id? (FK, null = standalone), title, fire_hour (0–23), fire_date?, recurrence (once|daily|yearly), snoozed_until?, timestamps.
 - `api_keys` — id, key_hash (SHA-256), name, scope (all|scoped), last_used_at?, timestamps.
-- `api_key_operations` — api_key_id (FK), operation_id (FK). Join used only by scoped keys; full-access keys skip it.
+- `api_key_groups` — api_key_id (FK), group_id (FK). Join used only by scoped keys; full-access keys skip it.
 
 ### Additional invariants (backend)
 - **Deleting a task** unlinks its dependency edges only — never deletes other tasks. Remove all `task_dependencies` rows where the task is either `task_id` or `prerequisite_id`, then delete the task. Dependents survive with one fewer prerequisite (and may become completable).
-- **Deleting an operation** is a user choice, not an automatic cascade. Offer at delete time: (a) **Move tasks to General Tasks** (unlink — tasks survive; their prerequisites are cleared, since prereqs are same-operation-scoped and the move invalidates them), or (b) **Delete operation and all its tasks** (full cascade, with a confirmation showing the task count). Optionally also allow (c) block-if-not-empty. General Tasks itself is undeletable.
-- Moving a task to a different operation clears its prerequisites (same rule as the operation-move case).
+- **Deleting a group** is a user choice, not an automatic cascade. Offer at delete time:
+  - (a) **Keep the contents** — the group's direct tasks move to General Tasks (prerequisites cleared, since prereqs are same-group-scoped and the move invalidates them), and its **sub-groups are promoted to the deleted group's own parent** (or to the top level). Nothing is lost.
+  - (b) **Delete everything inside** — a full cascade over the **whole subtree**: the group, every sub-group beneath it at any depth, and every task filed anywhere inside. The confirmation must state the sub-group and task counts it will destroy, taken from the real subtree.
+  
+  General Tasks itself is undeletable. The database deliberately declares **no `ON DELETE` action** on `groups.parent_id`, so this choice stays the handler's to make rather than something SQLite silently picks.
+- Moving a task to a different group clears its prerequisites (same rule as the group-move case).
 - Foreign-key integrity enforced in code (D1 cascades are not relied upon).
 
 ### Local development & testing
@@ -238,10 +252,10 @@ Lock these as shared tokens used app-wide (dashboard dots, modal badges, list ro
 ## 8. Invariants (enforce server-side, not just UI)
 
 1. A task cannot be Completed while any prerequisite is open (not Completed/Scrapped).
-2. An operation is complete only when all its Main quest tasks are complete.
+2. A group is complete only when all the Main quest tasks in it and in every sub-group beneath it are complete (rollup).
 3. The dependency graph must remain acyclic — reject any prerequisite edit that introduces a cycle.
-4. Prerequisites are same-operation only; moving a task's operation clears its prerequisites.
-5. Every request authorizes via API key → allowed operations → target's operation. No unauthenticated data access. The sole exception is the create-key endpoint, which is unauthenticated **only while zero keys exist** (first-run-open), then permanently sealed.
+4. Prerequisites are same-group only — nesting does not widen the scope; moving a task's group clears its prerequisites.
+5. Every request authorizes via API key → allowed groups → target's group. No unauthenticated data access. The sole exception is the create-key endpoint, which is unauthenticated **only while zero keys exist** (first-run-open), then permanently sealed.
 6. API keys are stored hashed; plaintext is shown to the client only once at creation.
 7. General Tasks always exists and cannot be deleted.
 
@@ -250,16 +264,16 @@ Lock these as shared tokens used app-wide (dashboard dots, modal badges, list ro
 ## 9. Resolved decisions (locked)
 
 - **Fonts (LOCKED)**: **Inter** for all UI/body text; **JetBrains Mono** for API keys and code-like strings (clear 0/O, 1/l/I). No separate display font for now (a wordmark face like Space Grotesk can be added later).
-- **Task edit (LOCKED — inline)**: the task modal has a **read mode and an inline edit mode** — fields become editable in place (title, type, operation, dates, importance, reminder, notes, and the **blocked-by prerequisite picker**). No separate edit form. The prerequisite picker, cycle-prevention, and validation must work in the inline edit state, not only at create time.
+- **Task edit (LOCKED — inline)**: the task modal has a **read mode and an inline edit mode** — fields become editable in place (title, type, group, dates, importance, reminder, notes, and the **blocked-by prerequisite picker**). No separate edit form. The prerequisite picker, cycle-prevention, and validation must work in the inline edit state, not only at create time.
 - **Snooze (LOCKED — custom picker)**: snoozing opens a **custom "defer until" picker** where the user selects a **day + hour** (hour precision only — no minutes, consistent with the rest of the reminder model). Reschedules the local notification on this device and writes `snoozed_until` to the backend on next sync.
-- **Completed/Scrapped tasks (default)**: hidden from the Dashboard (which answers "what do I do now"). Visible inside each **operation view via a "Show completed/scrapped" toggle**. No separate global archive screen. Un-scrapping / re-opening is possible from there.
-- **Empty dashboard sections (default)**: hide a section if it has zero tiles (no empty "Exploration" header). Operations with no active tasks are still discoverable via the Operations list screen.
+- **Completed/Scrapped tasks (default)**: hidden from the Dashboard (which answers "what do I do now"). Visible inside each **group view via a "Show completed/scrapped" toggle**. No separate global archive screen. Un-scrapping / re-opening is possible from there.
+- **Empty dashboard sections (default)**: hide a section if it has zero tiles (no empty "Exploration" header). Groups with no active tasks are still discoverable via the Groups tree screen.
 - **Modal border (default — neutral)**: the task modal uses a neutral border. Metal-tier (gold/silver/bronze) borders are used on **dashboard tiles only**, where they do real work; the modal already shows type via badge + icon.
 
 ### Two sub-flows — text spec (not separately mocked; follow existing patterns)
 
 **API key creation + one-time reveal:**
-1. From Settings → "New key": form with **name** (e.g. "Home Assistant"), **scope** = Full access | Scoped. If Scoped, a multi-select of operations appears.
+1. From Settings → "New key": form with **name** (e.g. "Home Assistant"), **scope** = Full access | Scoped. If Scoped, a multi-select of groups appears.
 2. On create, the Worker generates the key, stores only its SHA-256 hash, and returns the **plaintext once**.
 3. A **reveal screen** shows the plaintext key in a JetBrains Mono field with a **Copy** button and a clear warning: "This is the only time you'll see this key. Copy it now." A "Done" button dismisses; the key is never retrievable again.
 4. Revoking a key (from the key list overflow menu) deletes it; any device using it must reconnect with a new key.

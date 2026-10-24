@@ -1,8 +1,8 @@
 import type {
   ApiResponse,
-  Operation,
-  CreateOperationInput,
-  UpdateOperationInput,
+  Group,
+  CreateGroupInput,
+  UpdateGroupInput,
   Task,
   CreateTaskInput,
   UpdateTaskInput,
@@ -40,35 +40,40 @@ export class ZakhiraClient {
     return res.json() as Promise<ApiResponse<T>>;
   }
 
-  // ─── Operations ────────────────────────────────────────────────────────────
+  // ─── Groups ────────────────────────────────────────────────────────────────
 
-  listOperations(): Promise<ApiResponse<Operation[]>> {
-    return this.request("GET", "/operations");
+  listGroups(): Promise<ApiResponse<Group[]>> {
+    return this.request("GET", "/groups");
   }
 
-  getOperation(id: string): Promise<ApiResponse<Operation>> {
-    return this.request("GET", `/operations/${id}`);
+  getGroup(id: string): Promise<ApiResponse<Group>> {
+    return this.request("GET", `/groups/${id}`);
   }
 
-  createOperation(input: CreateOperationInput): Promise<ApiResponse<Operation>> {
-    return this.request("POST", "/operations", input);
+  createGroup(input: CreateGroupInput): Promise<ApiResponse<Group>> {
+    return this.request("POST", "/groups", input);
   }
 
-  updateOperation(id: string, input: UpdateOperationInput): Promise<ApiResponse<Operation>> {
-    return this.request("PATCH", `/operations/${id}`, input);
+  updateGroup(id: string, input: UpdateGroupInput): Promise<ApiResponse<Group>> {
+    return this.request("PATCH", `/groups/${id}`, input);
   }
 
-  deleteOperation(
+  /**
+   * `cascade` deletes the group's whole subtree — its tasks, its sub-groups and
+   * their tasks. `move` keeps everything: tasks go to General Tasks, sub-groups
+   * are promoted to the deleted group's own parent.
+   */
+  deleteGroup(
     id: string,
     strategy: "move" | "cascade"
   ): Promise<ApiResponse<{ deleted: true }>> {
-    return this.request("DELETE", `/operations/${id}`, { strategy });
+    return this.request("DELETE", `/groups/${id}`, { strategy });
   }
 
   // ─── Tasks ─────────────────────────────────────────────────────────────────
 
-  listTasks(operationId?: string): Promise<ApiResponse<Task[]>> {
-    const q = operationId ? `?operationId=${operationId}` : "";
+  listTasks(groupId?: string): Promise<ApiResponse<Task[]>> {
+    const q = groupId ? `?groupId=${groupId}` : "";
     return this.request("GET", `/tasks${q}`);
   }
 

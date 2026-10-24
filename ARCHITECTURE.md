@@ -25,7 +25,7 @@ Zakhira/
 │   │   ├── index.ts          Entry point — registers all routes
 │   │   ├── db/schema.ts      Database table definitions (Drizzle ORM)
 │   │   ├── routes/           One file per resource group
-│   │   │   ├── operations.ts
+│   │   │   ├── groups.ts
 │   │   │   ├── tasks.ts
 │   │   │   ├── reminders.ts
 │   │   │   ├── keys.ts
@@ -39,7 +39,7 @@ Zakhira/
 │
 ├── packages/
 │   ├── core/src/             Shared TypeScript code used by all three apps
-│   │   ├── types.ts          All domain interfaces (Task, Operation, etc.)
+│   │   ├── types.ts          All domain interfaces (Task, Group, etc.)
 │   │   ├── client.ts         ZakhiraClient — the HTTP API wrapper
 │   │   └── rules.ts          Business logic (completion gating, cycle detection)
 │   └── ui/src/
@@ -58,7 +58,7 @@ Zakhira/
 │       │   ├── setup.tsx     First-run screen (URL + API key entry)
 │       │   └── (tabs)/       Tab navigation group
 │       │       ├── index.tsx     Dashboard
-│       │       ├── operations.tsx
+│       │       ├── groups.tsx
 │       │       ├── reminders.tsx
 │       │       └── settings.tsx
 │       └── src/
@@ -91,7 +91,7 @@ Zakhira/
 │   Cloudflare Worker (Node-compatible edge runtime)            │
 │   Hono (HTTP framework) + Drizzle ORM + D1 (SQLite)          │
 │                                                               │
-│   /operations   /tasks   /reminders   /keys   /sync          │
+│   /groups       /tasks   /reminders   /keys   /sync          │
 │   /admin   /bootstrap   /health                               │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -100,11 +100,13 @@ Zakhira/
 
 ## The Data Model
 
-Everything belongs to a **User**. Each user can have many **Operations** (think: projects or campaigns). Each Operation has many **Tasks**.
+Everything belongs to a **User**. Each user can have many **Groups** (think: projects or campaigns). A group holds **Tasks** and, since it can nest, other **Groups** — a group's children are tasks and sub-groups side by side, to any depth.
 
 ```
 User
- └── Operation (project)
+ └── Group (project)
+      ├── Group (sub-group, nests to any depth)
+      │    └── Task
       └── Task
            ├── type: main | side | exploration
            ├── state: todo → in_progress → blocked → completed | scrapped
@@ -120,7 +122,10 @@ User
 
 - A task can only be marked **Complete** if all its prerequisites are already complete or scrapped. (`canComplete`)
 - Adding a prerequisite that would create a circular dependency is rejected. (`wouldCreateCycle`)
-- An Operation is considered "complete" when all its **Main Quest** tasks are done — Side Quests and Exploration tasks are optional. (`computeOperationStats`)
+- A Group is considered "complete" when all the **Main Quest** tasks in it *and in every sub-group beneath it* are done — progress rolls up the tree. Side Quests and Exploration tasks are optional. (`computeGroupStats`; `computeDirectGroupStats` ignores sub-groups where only the group's own list is the subject.)
+- A group cannot be moved inside itself or one of its own descendants. (`wouldCreateGroupCycle`)
+- **General Tasks** stays a flat top-level inbox: it cannot be nested, and it cannot hold sub-groups.
+- The tree is built client-side from flat rows with parent pointers (`buildGroupTree`), so both apps nest and order identically. Orphaned or cyclic rows are re-rooted rather than dropped — a bad row can't make tasks vanish from the UI.
 
 These rules live in `packages/core` so they are enforced the same way on desktop and mobile, not just on the server.
 
@@ -177,7 +182,7 @@ Both apps use the same pattern: a **module-level singleton** with a manual obser
 ```
                   ┌──────────────────────────────────────┐
                   │            _store (object)           │
-                  │  { apiKey, tasks, operations, ... }  │
+                  │  { apiKey, tasks, groups, ... }  │
                   └─────────────────┬────────────────────┘
                                     │
            subscribe(fn) ◄──────────┤──────────► notify()
@@ -202,7 +207,7 @@ Both apps use the same pattern: a **module-level singleton** with a manual obser
 
 ## Sync Protocol
 
-The backend has a `GET /sync?since=<ISO timestamp>` endpoint that returns all Operations, Tasks, and Reminders modified after a given timestamp. Clients pass their `lastSyncedAt` time and receive only what changed.
+The backend has a `GET /sync?since=<ISO timestamp>` endpoint that returns all Groups, Tasks, and Reminders modified after a given timestamp. Clients pass their `lastSyncedAt` time and receive only what changed.
 
 **Mobile** does delta sync — only fetches what changed since the last sync timestamp.
 
