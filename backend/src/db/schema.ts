@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
 
 // ─── Users ───────────────────────────────────────────────────────────────────
@@ -12,11 +13,15 @@ export const users = sqliteTable("users", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// ─── Operations ──────────────────────────────────────────────────────────────
+// ─── Groups ──────────────────────────────────────────────────────────────────
 
-export const operations = sqliteTable("operations", {
+export const groups = sqliteTable("groups", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id),
+  // Self-reference: NULL = top-level. The explicit AnySQLiteColumn return type
+  // is required — without it TypeScript hits a circular inference error on the
+  // table it is still in the middle of defining.
+  parentId: text("parent_id").references((): AnySQLiteColumn => groups.id),
   name: text("name").notNull(),
   description: text("description"),
   startDate: text("start_date"),
@@ -31,9 +36,9 @@ export const operations = sqliteTable("operations", {
 
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
-  operationId: text("operation_id")
+  groupId: text("group_id")
     .notNull()
-    .references(() => operations.id),
+    .references(() => groups.id),
   title: text("title").notNull(),
   type: text("type", { enum: ["main", "side", "exploration"] }).notNull(),
   state: text("state", {
@@ -93,35 +98,41 @@ export const apiKeys = sqliteTable("api_keys", {
   updatedAt: text("updated_at").notNull(),
 });
 
-// ─── API Key ↔ Operations (scoped keys) ───────────────────────────────────────
+// ─── API Key ↔ Groups (scoped keys) ───────────────────────────────────────────
 
-export const apiKeyOperations = sqliteTable("api_key_operations", {
+export const apiKeyGroups = sqliteTable("api_key_groups", {
   apiKeyId: text("api_key_id")
     .notNull()
     .references(() => apiKeys.id),
-  operationId: text("operation_id")
+  groupId: text("group_id")
     .notNull()
-    .references(() => operations.id),
+    .references(() => groups.id),
 });
 
 // ─── Relations ────────────────────────────────────────────────────────────────
 
 export const usersRelations = relations(users, ({ many }) => ({
   apiKeys: many(apiKeys),
-  operations: many(operations),
+  groups: many(groups),
   reminders: many(reminders),
 }));
 
-export const operationsRelations = relations(operations, ({ one, many }) => ({
-  user: one(users, { fields: [operations.userId], references: [users.id] }),
+export const groupsRelations = relations(groups, ({ one, many }) => ({
+  user: one(users, { fields: [groups.userId], references: [users.id] }),
+  parent: one(groups, {
+    fields: [groups.parentId],
+    references: [groups.id],
+    relationName: "groupHierarchy",
+  }),
+  children: many(groups, { relationName: "groupHierarchy" }),
   tasks: many(tasks),
-  apiKeyOperations: many(apiKeyOperations),
+  apiKeyGroups: many(apiKeyGroups),
 }));
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
-  operation: one(operations, {
-    fields: [tasks.operationId],
-    references: [operations.id],
+  group: one(groups, {
+    fields: [tasks.groupId],
+    references: [groups.id],
   }),
   dependenciesAsTask: many(taskDependencies, { relationName: "taskDeps" }),
   dependenciesAsPrereq: many(taskDependencies, { relationName: "prereqDeps" }),
@@ -154,16 +165,16 @@ export const remindersRelations = relations(reminders, ({ one }) => ({
 
 export const apiKeysRelations = relations(apiKeys, ({ one, many }) => ({
   user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
-  apiKeyOperations: many(apiKeyOperations),
+  apiKeyGroups: many(apiKeyGroups),
 }));
 
-export const apiKeyOperationsRelations = relations(apiKeyOperations, ({ one }) => ({
+export const apiKeyGroupsRelations = relations(apiKeyGroups, ({ one }) => ({
   apiKey: one(apiKeys, {
-    fields: [apiKeyOperations.apiKeyId],
+    fields: [apiKeyGroups.apiKeyId],
     references: [apiKeys.id],
   }),
-  operation: one(operations, {
-    fields: [apiKeyOperations.operationId],
-    references: [operations.id],
+  group: one(groups, {
+    fields: [apiKeyGroups.groupId],
+    references: [groups.id],
   }),
 }));

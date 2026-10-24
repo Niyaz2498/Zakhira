@@ -9,8 +9,8 @@ export interface Bindings {
 
 export interface AuthContext {
   userId: string;
-  /** Operation IDs this user may access. Always populated from the user's own operations. */
-  allowedOperationIds: string[];
+  /** Group IDs this user may access. Always populated from the user's own groups. */
+  allowedGroupIds: string[];
 }
 
 export type AppDB = DrizzleD1Database<typeof schema>;

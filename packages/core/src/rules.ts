@@ -1,4 +1,153 @@
-import type { Task, TaskState, OperationStats } from "./types.js";
+import type { Group, Task, TaskState, GroupStats } from "./types.js";
+
+// ─── Group hierarchy ─────────────────────────────────────────────────────────
+//
+// Groups nest: a group holds tasks and sub-groups side by side. The shape is a
+// forest — `parentId: null` marks a root — and every helper below treats a
+// malformed parent pointer (missing parent, or a cycle a bad write slipped in)
+// as something to survive rather than something to throw on. A corrupt row
+// should not be able to hang a render.
+
+/** groupId → parentId, for ancestor walks. */
+export function buildParentMap(groups: Group[]): Map<string, string | null> {
+  return new Map(groups.map((g) => [g.id, g.parentId]));
+}
+
+/**
+ * The group's ancestors, nearest parent first. A group whose parent is missing
+ * from `groups` simply ends the chain.
+ *
+ * The `seen` guard is not defensive theatre: if a cycle ever reaches the table,
+ * every caller of this function would otherwise loop forever.
+ */
+export function ancestorGroupIds(groupId: string, groups: Group[]): string[] {
+  const parentOf = buildParentMap(groups);
+  const chain: string[] = [];
+  const seen = new Set<string>([groupId]);
+
+  let current = parentOf.get(groupId) ?? null;
+  while (current !== null && !seen.has(current)) {
+    chain.push(current);
+    seen.add(current);
+    current = parentOf.get(current) ?? null;
+  }
+  return chain;
+}
+
+/**
+ * `groupId` plus every group beneath it, breadth-first — the subtree that
+ * completion stats roll up over and that a cascading delete removes.
+ * Returns an empty array if the group isn't in `groups`.
+ */
+export function groupSubtreeIds(groupId: string, groups: Group[]): string[] {
+  if (!groups.some((g) => g.id === groupId)) return [];
+
+  const childrenOf = new Map<string, string[]>();
+  for (const g of groups) {
+    if (g.parentId === null) continue;
+    const siblings = childrenOf.get(g.parentId) ?? [];
+    siblings.push(g.id);
+    childrenOf.set(g.parentId, siblings);
+  }
+
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const queue = [groupId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    ids.push(current);
+    queue.push(...(childrenOf.get(current) ?? []));
+  }
+  return ids;
+}
+
+/**
+ * True if making `newParentId` the parent of `groupId` would create a loop —
+ * i.e. the proposed parent is the group itself or one of its descendants.
+ *
+ * This is the group-tree counterpart of `wouldCreateCycle` for task
+ * prerequisites, and the backend must check it on every re-parent: a group
+ * that becomes its own ancestor disappears from the tree render entirely,
+ * taking its tasks with it.
+ */
+export function wouldCreateGroupCycle(
+  groupId: string,
+  newParentId: string | null,
+  groups: Group[]
+): boolean {
+  if (newParentId === null) return false; // promoting to top level is always safe
+  if (newParentId === groupId) return true;
+  return groupSubtreeIds(groupId, groups).includes(newParentId);
+}
+
+/** A group with its children attached, for recursive rendering. */
+export interface GroupNode {
+  group: Group;
+  /** 0 for a top-level group; used to indent. */
+  depth: number;
+  children: GroupNode[];
+}
+
+/**
+ * Build the group forest, ready to render.
+ *
+ * Ordering at every level: the default group ("General Tasks") first, then the
+ * rest by name — so the tree reads the same on both platforms and a rename is
+ * the only thing that moves a group.
+ *
+ * Groups orphaned by a missing parent are surfaced as roots instead of being
+ * dropped; a group whose parent pointer loops is unreachable from any root, so
+ * it is also re-rooted. Nothing silently vanishes from the UI.
+ */
+export function buildGroupTree(groups: Group[]): GroupNode[] {
+  const byId = new Map(groups.map((g) => [g.id, g]));
+
+  const byLevel = (a: Group, b: Group) => {
+    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  };
+
+  const childrenOf = new Map<string | null, Group[]>();
+  for (const g of groups) {
+    // Treat a dangling parent as "no parent" so the group still renders.
+    const parent = g.parentId !== null && byId.has(g.parentId) ? g.parentId : null;
+    const siblings = childrenOf.get(parent) ?? [];
+    siblings.push(g);
+    childrenOf.set(parent, siblings);
+  }
+
+  const placed = new Set<string>();
+  const build = (group: Group, depth: number): GroupNode => {
+    placed.add(group.id);
+    const kids = (childrenOf.get(group.id) ?? [])
+      .filter((child) => !placed.has(child.id)) // cycle guard
+      .sort(byLevel);
+    return { group, depth, children: kids.map((child) => build(child, depth + 1)) };
+  };
+
+  const forest = (childrenOf.get(null) ?? []).sort(byLevel).map((g) => build(g, 0));
+
+  // Anything a cycle kept out of the forest is re-rooted rather than lost.
+  // `placed` must be re-checked on each iteration, not filtered up front:
+  // re-rooting one member of a cycle pulls the rest in as its children, and
+  // those must not then be re-rooted a second time — that would render the
+  // same group twice, with a duplicate key.
+  for (const group of [...groups].sort(byLevel)) {
+    if (placed.has(group.id)) continue;
+    forest.push(build(group, 0));
+  }
+  return forest;
+}
+
+/**
+ * Depth-first flattening of the forest, parents before their children — the
+ * order a single scrolling list renders in, with `depth` driving the indent.
+ */
+export function flattenGroupTree(nodes: GroupNode[]): GroupNode[] {
+  return nodes.flatMap((node) => [node, ...flattenGroupTree(node.children)]);
+}
 
 // ─── Cycle detection (DFS) ───────────────────────────────────────────────────
 
@@ -31,7 +180,7 @@ export function wouldCreateCycle(
 }
 
 /**
- * Given the full prerequisite map for an operation, validate that the
+ * Given the full prerequisite map for a group, validate that the
  * proposed prerequisite list for `taskId` creates no cycle.
  * Returns the IDs that would create a cycle.
  */
@@ -57,9 +206,9 @@ export function isTaskOpen(state: TaskState): boolean {
  * Returns true if the task can be marked Complete.
  * Rule: all prerequisites must be non-open (completed or scrapped).
  */
-export function canComplete(task: Task, allTasksInOp: Task[]): boolean {
+export function canComplete(task: Task, allTasksInGroup: Task[]): boolean {
   if (task.prerequisites.length === 0) return true;
-  const taskMap = new Map(allTasksInOp.map((t) => [t.id, t]));
+  const taskMap = new Map(allTasksInGroup.map((t) => [t.id, t]));
   return task.prerequisites.every((prereqId) => {
     const prereq = taskMap.get(prereqId);
     return prereq !== undefined && !isTaskOpen(prereq.state);
@@ -69,20 +218,20 @@ export function canComplete(task: Task, allTasksInOp: Task[]): boolean {
 /**
  * Returns the blocking prerequisites (those still open).
  */
-export function blockingPrerequisites(task: Task, allTasksInOp: Task[]): Task[] {
-  const taskMap = new Map(allTasksInOp.map((t) => [t.id, t]));
+export function blockingPrerequisites(task: Task, allTasksInGroup: Task[]): Task[] {
+  const taskMap = new Map(allTasksInGroup.map((t) => [t.id, t]));
   return task.prerequisites
     .map((id) => taskMap.get(id))
     .filter((t): t is Task => t !== undefined && isTaskOpen(t.state));
 }
 
-// ─── Operation completion ────────────────────────────────────────────────────
+// ─── Group completion ────────────────────────────────────────────────────────
 
 /**
- * An operation is complete when ALL its main quest tasks are complete.
- * Side quests and Exploration tasks do not count.
+ * Count main-quest completion over an explicit set of tasks.
+ * Side quests and Exploration tasks never gate completion.
  */
-export function computeOperationStats(tasks: Task[]): OperationStats {
+function mainQuestStats(tasks: Task[]): GroupStats {
   const mainTasks = tasks.filter((t) => t.type === "main");
   const completedMain = mainTasks.filter((t) => t.state === "completed").length;
   return {
@@ -90,6 +239,37 @@ export function computeOperationStats(tasks: Task[]): OperationStats {
     completedMain,
     isComplete: mainTasks.length > 0 && completedMain === mainTasks.length,
   };
+}
+
+/**
+ * A group is complete when every main quest in it *and in all its sub-groups*
+ * is complete — progress rolls up the tree.
+ *
+ * The rollup is the point: a parent that reads "complete" while a sub-group
+ * still has open main quests would be lying about the work. A parent with no
+ * main quests of its own therefore reports its descendants' progress, and a
+ * group with no main quests anywhere in its subtree is never `isComplete`
+ * (same rule as before — an empty group isn't an achievement).
+ *
+ * @param groupId the group to report on
+ * @param groups  all groups the caller knows about, for walking the subtree
+ * @param tasks   all tasks the caller knows about; filtered here by subtree
+ */
+export function computeGroupStats(
+  groupId: string,
+  groups: Group[],
+  tasks: Task[]
+): GroupStats {
+  const subtree = new Set(groupSubtreeIds(groupId, groups));
+  return mainQuestStats(tasks.filter((t) => subtree.has(t.groupId)));
+}
+
+/**
+ * Completion counting only tasks filed directly on the group, ignoring
+ * sub-groups. Used where the subject really is this one group's own list.
+ */
+export function computeDirectGroupStats(groupId: string, tasks: Task[]): GroupStats {
+  return mainQuestStats(tasks.filter((t) => t.groupId === groupId));
 }
 
 // ─── Prerequisite adjacency builder ──────────────────────────────────────────
@@ -112,7 +292,7 @@ const STATE_DISPLAY_RANK: Record<TaskState, number> = {
   scrapped: 4,
 };
 
-export interface TaskDisplayGroups {
+export interface TaskDisplaySections {
   /** Still open: in progress, then todo, then blocked. */
   active: Task[];
   /** Finished: completed, then scrapped. Rendered below a divider. */
@@ -120,13 +300,13 @@ export interface TaskDisplayGroups {
 }
 
 /**
- * Split an operation's tasks into the two groups the Operations screens render.
+ * Split a group's tasks into the two sections the Groups screens render.
  *
  * Sorting is by state rank only. `Array.prototype.sort` is stable, so tasks
  * sharing a state keep the order they came in — a task won't jump position
  * because an unrelated one changed.
  */
-export function groupTasksForDisplay(tasks: Task[]): TaskDisplayGroups {
+export function splitTasksForDisplay(tasks: Task[]): TaskDisplaySections {
   const byRank = (a: Task, b: Task) =>
     STATE_DISPLAY_RANK[a.state] - STATE_DISPLAY_RANK[b.state];
 

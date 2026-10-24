@@ -33,9 +33,9 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="operations"
+        name="groups"
         options={{
-          title: "Operations",
+          title: "Groups",
           tabBarIcon: ({ focused, color }) => (
             <TabIcon name="layers" focused={focused} color={color} />
           ),

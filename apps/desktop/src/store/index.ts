@@ -1,5 +1,5 @@
 import { ZakhiraClient } from "@zakhira/core";
-import type { Operation, Task, Reminder } from "@zakhira/core";
+import type { Group, Task, Reminder } from "@zakhira/core";
 
 const LS = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -18,11 +18,16 @@ function saveCached<T>(key: string, items: T[]): void {
   LS.set(key, JSON.stringify(items));
 }
 
+// Groups were cached under "zakhira_operations" before the rename. Nothing
+// reads that key now, so drop it once rather than leave a stale copy of the
+// user's data sitting in localStorage forever. Safe to run every launch.
+LS.del("zakhira_operations");
+
 export interface AppStore {
   token: string | null;
   apiUrl: string;
   displayName: string | null;
-  operations: Operation[];
+  groups: Group[];
   tasks: Task[];
   reminders: Reminder[];
   lastSyncedAt: string | null;
@@ -33,7 +38,7 @@ let _store: AppStore = {
   token: LS.get("zakhira_token"),
   apiUrl: LS.get("zakhira_api_url") ?? (import.meta.env.VITE_API_URL ?? "https://zakhira-backend.zakhira.workers.dev"),
   displayName: LS.get("zakhira_display_name"),
-  operations: loadCached<Operation>("zakhira_operations"),
+  groups: loadCached<Group>("zakhira_groups"),
   tasks: loadCached<Task>("zakhira_tasks"),
   reminders: loadCached<Reminder>("zakhira_reminders"),
   lastSyncedAt: LS.get("zakhira_last_synced_at"),
@@ -70,12 +75,12 @@ export async function sync(): Promise<void> {
     const res = await client.sync(undefined);
     if (!res.ok) return;
 
-    const { operations, tasks, reminders, syncedAt } = res.data;
+    const { groups, tasks, reminders, syncedAt } = res.data;
 
-    _store = { ..._store, operations, tasks, reminders, lastSyncedAt: syncedAt };
+    _store = { ..._store, groups, tasks, reminders, lastSyncedAt: syncedAt };
 
     // Persist to localStorage so data survives restarts
-    saveCached("zakhira_operations", operations);
+    saveCached("zakhira_groups", groups);
     saveCached("zakhira_tasks", tasks);
     saveCached("zakhira_reminders", reminders);
     LS.set("zakhira_last_synced_at", syncedAt);
@@ -99,10 +104,30 @@ export function addTask(task: Task): void {
   notify();
 }
 
-export function addOperation(op: Operation): void {
-  const operations = [..._store.operations, op];
-  _store = { ..._store, operations };
-  saveCached("zakhira_operations", operations);
+export function addGroup(group: Group): void {
+  const groups = [..._store.groups, group];
+  _store = { ..._store, groups };
+  saveCached("zakhira_groups", groups);
+  notify();
+}
+
+/** Replace a group in place — used after a re-parent or rename. */
+export function updateGroupInStore(updated: Group): void {
+  const groups = _store.groups.map((g) => (g.id === updated.id ? updated : g));
+  _store = { ..._store, groups };
+  saveCached("zakhira_groups", groups);
+  notify();
+}
+
+/**
+ * Drop a deleted group. The server has already re-parented or removed its
+ * subtree, so the next sync reconciles the rest; this just keeps the UI honest
+ * until then.
+ */
+export function removeGroupFromStore(id: string): void {
+  const groups = _store.groups.filter((g) => g.id !== id);
+  _store = { ..._store, groups };
+  saveCached("zakhira_groups", groups);
   notify();
 }
 
@@ -116,7 +141,7 @@ export function addReminder(reminder: Reminder): void {
 export function logout(): void {
   LS.del("zakhira_token");
   LS.del("zakhira_display_name");
-  LS.del("zakhira_operations");
+  LS.del("zakhira_groups");
   LS.del("zakhira_tasks");
   LS.del("zakhira_reminders");
   LS.del("zakhira_last_synced_at");
@@ -124,7 +149,7 @@ export function logout(): void {
     ..._store,
     token: null,
     displayName: null,
-    operations: [],
+    groups: [],
     tasks: [],
     reminders: [],
     lastSyncedAt: null,

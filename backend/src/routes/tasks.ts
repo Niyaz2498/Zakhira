@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, or } from "drizzle-orm";
 import * as schema from "../db/schema.js";
-import { authMiddleware, assertOperationAccess } from "../middleware/auth.js";
+import { authMiddleware, assertGroupAccess } from "../middleware/auth.js";
 import type { Bindings, AuthContext, AppDB } from "../types.js";
 import type { Task } from "@zakhira/core";
 import {
@@ -32,7 +32,7 @@ function rowToTask(
 ): Task {
   return {
     id: row.id,
-    operationId: row.operationId,
+    groupId: row.groupId,
     title: row.title,
     type: row.type as Task["type"],
     state: row.state as Task["state"],
@@ -49,9 +49,9 @@ function rowToTask(
   };
 }
 
-async function loadTasksForOp(db: AppDB, operationId: string): Promise<Task[]> {
+async function loadTasksForGroup(db: AppDB, groupId: string): Promise<Task[]> {
   const rows = await db.query.tasks.findMany({
-    where: eq(schema.tasks.operationId, operationId),
+    where: eq(schema.tasks.groupId, groupId),
   });
   const allDeps = await db.query.taskDependencies.findMany();
   const depMap = new Map<string, string[]>();
@@ -63,22 +63,22 @@ async function loadTasksForOp(db: AppDB, operationId: string): Promise<Task[]> {
   return rows.map((r) => rowToTask(r, depMap.get(r.id) ?? []));
 }
 
-// GET /tasks[?operationId=...]
+// GET /tasks[?groupId=...]
 app.get("/", async (c) => {
   const auth = c.get("auth");
   const db = drizzle(c.env.DB, { schema }) as AppDB;
-  const opId = c.req.query("operationId");
+  const groupId = c.req.query("groupId");
 
   let rows: (typeof schema.tasks.$inferSelect)[];
-  if (opId) {
-    assertOperationAccess(auth, opId);
+  if (groupId) {
+    assertGroupAccess(auth, groupId);
     rows = await db.query.tasks.findMany({
-      where: eq(schema.tasks.operationId, opId),
+      where: eq(schema.tasks.groupId, groupId),
     });
   } else {
     rows = await db.query.tasks.findMany();
-    if (auth.allowedOperationIds) {
-      rows = rows.filter((r) => auth.allowedOperationIds.includes(r.operationId));
+    if (auth.allowedGroupIds) {
+      rows = rows.filter((r) => auth.allowedGroupIds.includes(r.groupId));
     }
   }
 
@@ -99,7 +99,7 @@ app.get("/:id", async (c) => {
   const db = drizzle(c.env.DB, { schema }) as AppDB;
   const task = await loadTask(db, c.req.param("id"));
   if (!task) return c.json({ ok: false, error: "Not found" }, 404);
-  assertOperationAccess(auth, task.operationId);
+  assertGroupAccess(auth, task.groupId);
   return c.json({ ok: true, data: task });
 });
 
@@ -108,7 +108,7 @@ app.post("/", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json<{
     title: string;
-    operationId: string;
+    groupId: string;
     type: Task["type"];
     state?: Task["state"];
     startDate?: string;
@@ -119,15 +119,15 @@ app.post("/", async (c) => {
   }>();
 
   if (!body.title?.trim()) return c.json({ ok: false, error: "title is required" }, 400);
-  if (!body.operationId) return c.json({ ok: false, error: "operationId is required" }, 400);
-  assertOperationAccess(auth, body.operationId);
+  if (!body.groupId) return c.json({ ok: false, error: "groupId is required" }, 400);
+  assertGroupAccess(auth, body.groupId);
 
   const db = drizzle(c.env.DB, { schema }) as AppDB;
 
   // Validate prerequisites
   if (body.prerequisites?.length) {
-    const opTasks = await loadTasksForOp(db, body.operationId);
-    const prereqMap = buildPrereqMap(opTasks);
+    const groupTasks = await loadTasksForGroup(db, body.groupId);
+    const prereqMap = buildPrereqMap(groupTasks);
     // New task has no ID yet; cycle check uses a placeholder
     const tempId = "__new__";
     prereqMap.set(tempId, body.prerequisites);
@@ -135,11 +135,11 @@ app.post("/", async (c) => {
     if (cyclers.length) {
       return c.json({ ok: false, error: "Prerequisites would create a cycle", code: "CYCLE" }, 400);
     }
-    // Ensure all prereq IDs belong to the same operation
-    const opTaskIds = new Set(opTasks.map((t) => t.id));
-    const foreign = body.prerequisites.filter((id) => !opTaskIds.has(id));
+    // Ensure all prereq IDs belong to the same group
+    const groupTaskIds = new Set(groupTasks.map((t) => t.id));
+    const foreign = body.prerequisites.filter((id) => !groupTaskIds.has(id));
     if (foreign.length) {
-      return c.json({ ok: false, error: "Prerequisites must be in the same operation" }, 400);
+      return c.json({ ok: false, error: "Prerequisites must be in the same group" }, 400);
     }
   }
 
@@ -147,7 +147,7 @@ app.post("/", async (c) => {
   const id = crypto.randomUUID();
   await db.insert(schema.tasks).values({
     id,
-    operationId: body.operationId,
+    groupId: body.groupId,
     title: body.title.trim(),
     type: body.type,
     state: body.state ?? "todo",
@@ -177,11 +177,11 @@ app.patch("/:id", async (c) => {
   const id = c.req.param("id");
   const existing = await loadTask(db, id);
   if (!existing) return c.json({ ok: false, error: "Not found" }, 404);
-  assertOperationAccess(auth, existing.operationId);
+  assertGroupAccess(auth, existing.groupId);
 
   const body = await c.req.json<{
     title?: string;
-    operationId?: string;
+    groupId?: string;
     type?: Task["type"];
     state?: Task["state"];
     startDate?: string | null;
@@ -195,11 +195,11 @@ app.patch("/:id", async (c) => {
 
   if (existing.state === "completed" || existing.state === "scrapped") {
     // Allow: recovery (state → todo) OR timer stop (timerStartedAt → null + timeLogged)
-    const isRecovery = body.state === "todo" && !body.title && !body.operationId
+    const isRecovery = body.state === "todo" && !body.title && !body.groupId
       && !body.type && !("startDate" in body) && !("endDate" in body)
       && !("importance" in body) && !("notes" in body) && !body.prerequisites;
     const isTimerStop = "timerStartedAt" in body && body.timerStartedAt === null
-      && !body.title && !body.operationId && !body.type && !body.state
+      && !body.title && !body.groupId && !body.type && !body.state
       && !("startDate" in body) && !("endDate" in body) && !("importance" in body)
       && !("notes" in body) && !body.prerequisites;
     if (!isRecovery && !isTimerStop) {
@@ -207,20 +207,20 @@ app.patch("/:id", async (c) => {
     }
   }
 
-  // Moving to a different operation clears prerequisites
-  const newOpId = body.operationId ?? existing.operationId;
-  const opChanged = newOpId !== existing.operationId;
-  if (opChanged) {
-    assertOperationAccess(auth, newOpId);
+  // Moving to a different group clears prerequisites
+  const newGroupId = body.groupId ?? existing.groupId;
+  const groupChanged = newGroupId !== existing.groupId;
+  if (groupChanged) {
+    assertGroupAccess(auth, newGroupId);
   }
 
-  let newPrereqs = opChanged ? [] : (body.prerequisites ?? existing.prerequisites);
+  let newPrereqs = groupChanged ? [] : (body.prerequisites ?? existing.prerequisites);
 
   // If state → completed, check gating
   if (body.state === "completed" && existing.state !== "completed") {
-    const opTasks = await loadTasksForOp(db, existing.operationId);
+    const groupTasks = await loadTasksForGroup(db, existing.groupId);
     const taskWithNewPrereqs = { ...existing, prerequisites: newPrereqs };
-    if (!canComplete(taskWithNewPrereqs, opTasks)) {
+    if (!canComplete(taskWithNewPrereqs, groupTasks)) {
       return c.json({
         ok: false,
         error: "Cannot complete task: some prerequisites are still open",
@@ -229,19 +229,19 @@ app.patch("/:id", async (c) => {
     }
   }
 
-  // Validate prerequisites (only if explicitly provided and op not changed)
-  if (!opChanged && body.prerequisites !== undefined) {
-    const opTasks = await loadTasksForOp(db, existing.operationId);
-    const prereqMap = buildPrereqMap(opTasks);
+  // Validate prerequisites (only if explicitly provided and group not changed)
+  if (!groupChanged && body.prerequisites !== undefined) {
+    const groupTasks = await loadTasksForGroup(db, existing.groupId);
+    const prereqMap = buildPrereqMap(groupTasks);
     prereqMap.set(id, body.prerequisites);
     const cyclers = findCycleCreators(id, body.prerequisites, prereqMap);
     if (cyclers.length) {
       return c.json({ ok: false, error: "Prerequisites would create a cycle", code: "CYCLE" }, 400);
     }
-    const opTaskIds = new Set(opTasks.map((t) => t.id));
-    const foreign = body.prerequisites.filter((pid) => pid !== id && !opTaskIds.has(pid));
+    const groupTaskIds = new Set(groupTasks.map((t) => t.id));
+    const foreign = body.prerequisites.filter((pid) => pid !== id && !groupTaskIds.has(pid));
     if (foreign.length) {
-      return c.json({ ok: false, error: "Prerequisites must be in the same operation" }, 400);
+      return c.json({ ok: false, error: "Prerequisites must be in the same group" }, 400);
     }
   }
 
@@ -250,7 +250,7 @@ app.patch("/:id", async (c) => {
     .update(schema.tasks)
     .set({
       title: body.title ?? existing.title,
-      operationId: newOpId,
+      groupId: newGroupId,
       type: body.type ?? existing.type,
       state: body.state ?? existing.state,
       startDate: "startDate" in body ? (body.startDate ?? null) : existing.startDate,
@@ -282,7 +282,7 @@ app.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const task = await loadTask(db, id);
   if (!task) return c.json({ ok: false, error: "Not found" }, 404);
-  assertOperationAccess(auth, task.operationId);
+  assertGroupAccess(auth, task.groupId);
 
   // Remove all dependency edges (both directions)
   await db

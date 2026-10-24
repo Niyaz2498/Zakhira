@@ -4,7 +4,7 @@ import { gte, eq } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware } from "../middleware/auth.js";
 import type { Bindings, AuthContext, AppDB } from "../types.js";
-import type { Task, Operation, Reminder } from "@zakhira/core";
+import type { Task, Group, Reminder } from "@zakhira/core";
 
 const app = new Hono<{ Bindings: Bindings; Variables: { auth: AuthContext } }>();
 
@@ -19,10 +19,10 @@ app.get("/", async (c) => {
   // Each branch calls findMany with a concrete argument rather than passing a
   // `{ where } | {}` union — drizzle's KnownKeysOnly constraint rejects the
   // union, since `{}` is missing the `where` key the other half declares.
-  const [opRows, taskRows, reminderRows] = await Promise.all([
+  const [groupRows, taskRows, reminderRows] = await Promise.all([
     since
-      ? db.query.operations.findMany({ where: gte(schema.operations.updatedAt, since) })
-      : db.query.operations.findMany(),
+      ? db.query.groups.findMany({ where: gte(schema.groups.updatedAt, since) })
+      : db.query.groups.findMany(),
     since
       ? db.query.tasks.findMany({ where: gte(schema.tasks.updatedAt, since) })
       : db.query.tasks.findMany(),
@@ -32,13 +32,13 @@ app.get("/", async (c) => {
   ]);
 
   // Apply auth scope filtering
-  let filteredOps: typeof opRows = opRows;
+  let filteredGroups: typeof groupRows = groupRows;
   let filteredTasks: typeof taskRows = taskRows;
   let filteredReminders: typeof reminderRows = reminderRows;
-  if (auth.allowedOperationIds) {
-    filteredOps = opRows.filter((r) => auth.allowedOperationIds!.includes(r.id));
+  if (auth.allowedGroupIds) {
+    filteredGroups = groupRows.filter((r) => auth.allowedGroupIds!.includes(r.id));
     filteredTasks = taskRows.filter((t) =>
-      auth.allowedOperationIds!.includes(t.operationId)
+      auth.allowedGroupIds!.includes(t.groupId)
     );
   }
   if (auth.userId) {
@@ -54,10 +54,11 @@ app.get("/", async (c) => {
     depMap.set(d.taskId, arr);
   }
 
-  const operations: Operation[] = filteredOps.map((r) => ({
+  const groups: Group[] = filteredGroups.map((r) => ({
     id: r.id,
     name: r.name,
     description: r.description,
+    parentId: r.parentId,
     startDate: r.startDate,
     endDate: r.endDate,
     importance: r.importance,
@@ -68,7 +69,7 @@ app.get("/", async (c) => {
 
   const tasks: Task[] = filteredTasks.map((r) => ({
     id: r.id,
-    operationId: r.operationId,
+    groupId: r.groupId,
     title: r.title,
     type: r.type,
     state: r.state,
@@ -98,7 +99,7 @@ app.get("/", async (c) => {
 
   return c.json({
     ok: true,
-    data: { operations, tasks, reminders, syncedAt: new Date().toISOString() },
+    data: { groups, tasks, reminders, syncedAt: new Date().toISOString() },
   });
 });
 
