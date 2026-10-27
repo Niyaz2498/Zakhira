@@ -2,7 +2,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { CSSProperties } from "react";
 import { getClient, updateTaskInStore } from "../store";
 import { useStore } from "../store/useStore";
-import { canComplete, blockingPrerequisites } from "@zakhira/core";
+import {
+  canComplete,
+  blockingPrerequisites,
+  buildGroupTree,
+  flattenGroupTree,
+} from "@zakhira/core";
 import { DateInput } from "./FormControls";
 import type { Task, TaskType, TaskState, UpdateTaskInput } from "@zakhira/core";
 import type { ColorTokens } from "@zakhira/ui";
@@ -206,10 +211,10 @@ function PriorityPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: Colo
   );
 }
 
-function OperationPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: ColorTokens; onUpdate: (fields: UpdateTaskInput) => void; busy: boolean }) {
+function GroupPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: ColorTokens; onUpdate: (fields: UpdateTaskInput) => void; busy: boolean }) {
   const p = usePicker();
   const store = useStore();
-  const currentOp = store.operations.find(o => o.id === ct.operationId);
+  const currentGroup = store.groups.find(g => g.id === ct.groupId);
   const color = tokens.textTertiary;
 
   return (
@@ -218,25 +223,30 @@ function OperationPicker({ ct, tokens, onUpdate, busy }: { ct: Task; tokens: Col
         ...triggerStyle(color, p.open),
         backgroundColor: tokens.border,
       }}>
-        {currentOp?.name ?? "Unknown"}
+        {currentGroup?.name ?? "Unknown"}
         <Chevron open={p.open} />
       </button>
       {p.open && (
         <div style={{ ...dropdownStyle(tokens), minWidth: 200, maxHeight: 200, overflowY: "auto" }}>
-          {store.operations.map(op => {
-            const isCurrent = op.id === ct.operationId;
+          {/* Flattened tree order, indented by depth: two sub-groups can share
+              a name, so position in the hierarchy is what tells them apart. */}
+          {flattenGroupTree(buildGroupTree(store.groups)).map(({ group, depth }) => {
+            const isCurrent = group.id === ct.groupId;
             return (
-              <button key={op.id} type="button"
-                onClick={() => { onUpdate({ operationId: op.id }); p.close(); }}
-                onMouseEnter={() => p.setHoverKey(op.id)}
+              <button key={group.id} type="button"
+                onClick={() => { onUpdate({ groupId: group.id }); p.close(); }}
+                onMouseEnter={() => p.setHoverKey(group.id)}
                 onMouseLeave={() => p.setHoverKey(null)}
-                style={itemStyle(isCurrent, p.hoverKey === op.id, tokens.accent, tokens)}
+                style={{
+                  ...itemStyle(isCurrent, p.hoverKey === group.id, tokens.accent, tokens),
+                  paddingLeft: 10 + depth * 14,
+                }}
               >
                 {isCurrent
                   ? <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: tokens.accent, display: "inline-block", flexShrink: 0 }} />
                   : <span style={{ width: 8, height: 8, display: "inline-block", flexShrink: 0 }} />
                 }
-                {op.name}
+                {group.name}
                 {isCurrent && <span style={{ marginLeft: "auto", fontSize: 10, color: tokens.accent }}>✓</span>}
               </button>
             );
@@ -278,13 +288,13 @@ const TrashIcon = () => (
 
 interface Props {
   task: Task;
-  allTasksInOp: Task[];
-  opName: string;
+  allTasksInGroup: Task[];
+  groupName: string;
   tokens: ColorTokens;
   onClose: () => void;
 }
 
-export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props) {
+export function TaskModal({ task, allTasksInGroup, groupName, tokens, onClose }: Props) {
   const [ct, setCt] = useState(task);
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [busy, setBusy] = useState(false);
@@ -333,10 +343,10 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
   }
 
   const isDone = ct.state === "completed" || ct.state === "scrapped";
-  const blocking = blockingPrerequisites(ct, allTasksInOp);
-  const completable = canComplete(ct, allTasksInOp);
+  const blocking = blockingPrerequisites(ct, allTasksInGroup);
+  const completable = canComplete(ct, allTasksInGroup);
   const priority = ct.importance !== null ? VALUE_PRIORITY[ct.importance] : null;
-  const prereqTasks = ct.prerequisites.map(id => allTasksInOp.find(t => t.id === id)).filter(Boolean) as Task[];
+  const prereqTasks = ct.prerequisites.map(id => allTasksInGroup.find(t => t.id === id)).filter(Boolean) as Task[];
 
   // Escape: dismiss confirm → exit edit → close modal
   useEffect(() => {
@@ -443,7 +453,7 @@ export function TaskModal({ task, allTasksInOp, opName, tokens, onClose }: Props
             <StatusPicker ct={ct} tokens={tokens} onUpdate={updateField} busy={busy} />
             <TypePicker ct={ct} tokens={tokens} onUpdate={updateField} busy={busy} />
             <PriorityPicker ct={ct} tokens={tokens} onUpdate={updateField} busy={busy} />
-            <OperationPicker ct={ct} tokens={tokens} onUpdate={updateField} busy={busy} />
+            <GroupPicker ct={ct} tokens={tokens} onUpdate={updateField} busy={busy} />
           </div>
         </div>
 

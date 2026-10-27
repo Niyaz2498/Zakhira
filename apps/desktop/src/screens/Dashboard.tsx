@@ -5,10 +5,27 @@ import { useStore } from "../store/useStore";
 import { getClient, addTask, sync } from "../store";
 import { TaskModal } from "../components/TaskModal";
 import { CustomSelect } from "../components/FormControls";
-import type { Task, TaskType, TaskState } from "@zakhira/core";
+import type { SelectOption } from "../components/FormControls";
+import {
+  buildGroupTree,
+  flattenGroupTree,
+  ancestorGroupIds,
+} from "@zakhira/core";
+import type { Group, Task, TaskType, TaskState } from "@zakhira/core";
 import type { ColorTokens } from "@zakhira/ui";
 
-type GroupBy = "type" | "operation" | "status";
+/**
+ * Every group as a pickable option, in tree order and indented by depth.
+ * A task may live in any group, parent or leaf alike, so nothing is filtered.
+ */
+function groupPickerOptions(groups: Group[]): SelectOption[] {
+  return flattenGroupTree(buildGroupTree(groups)).map(({ group, depth }) => ({
+    value: group.id,
+    label: `${"  ".repeat(depth)}${group.name}`,
+  }));
+}
+
+type GroupBy = "type" | "group" | "status";
 type ChartMode = "status" | "type";
 type Priority = "low" | "medium" | "high";
 const PRIORITY_VALUE: Record<Priority, number> = { low: 1, medium: 2, high: 3 };
@@ -220,7 +237,7 @@ function PillToggle({ options, value, onChange }: { options: { key: string; labe
 
 // ── Task tile ────────────────────────────────────────────────────────────────
 
-function TaskTile({ task, opName, tokens, onClick }: { task: Task; opName: string; tokens: ColorTokens; onClick: () => void }) {
+function TaskTile({ task, groupName, tokens, onClick }: { task: Task; groupName: string; tokens: ColorTokens; onClick: () => void }) {
   const PRIORITY_LABEL: Record<number, string> = { 1: "Low", 2: "Medium", 3: "High" };
   const PRIORITY_COLOR: Record<number, string> = { 1: "#5aa9f0", 2: "#f59e0b", 3: "#ef4444" };
   const priority = task.importance !== null ? PRIORITY_LABEL[task.importance] : null;
@@ -239,7 +256,7 @@ function TaskTile({ task, opName, tokens, onClick }: { task: Task; opName: strin
     }}>
       {overdue && <div style={{ position: "absolute", top: 10, right: 10, width: 7, height: 7, borderRadius: "50%", backgroundColor: "#ef4444", boxShadow: "0 0 6px #ef444488" }} />}
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-        <span style={{ fontSize: 11, color: tokens.textTertiary }}>{TYPE_ICONS[task.type]} {opName}</span>
+        <span style={{ fontSize: 11, color: tokens.textTertiary }}>{TYPE_ICONS[task.type]} {groupName}</span>
         <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: stateColor(task.state, tokens), display: "inline-block", marginTop: 2, boxShadow: `0 0 6px ${stateColor(task.state, tokens)}88` }} />
       </div>
       <div style={{ fontSize: 14, fontWeight: 600, color: tokens.textPrimary, lineHeight: 1.4, marginBottom: 8 }}>{task.title}</div>
@@ -268,11 +285,11 @@ function FieldLabel({ text, required }: { text: string; required?: boolean }) {
   );
 }
 
-function CreateTaskModal({ defaultOpId, tokens, onClose }: { defaultOpId: string; tokens: ColorTokens; onClose: () => void }) {
+function CreateTaskModal({ defaultGroupId, tokens, onClose }: { defaultGroupId: string; tokens: ColorTokens; onClose: () => void }) {
   const store = useStore();
   const [title, setTitle] = useState("");
   const [type, setType] = useState<TaskType>("main");
-  const [opId, setOpId] = useState(defaultOpId);
+  const [groupId, setGroupId] = useState(defaultGroupId);
   const [priority, setPriority] = useState<Priority | "">("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -285,7 +302,7 @@ function CreateTaskModal({ defaultOpId, tokens, onClose }: { defaultOpId: string
       const client = getClient();
       if (!client) throw new Error("Not connected");
       const res = await client.createTask({
-        title: title.trim(), operationId: opId, type,
+        title: title.trim(), groupId, type,
         importance: priority !== "" ? PRIORITY_VALUE[priority] : undefined,
         notes: notes.trim() || undefined,
       });
@@ -318,11 +335,11 @@ function CreateTaskModal({ defaultOpId, tokens, onClose }: { defaultOpId: string
               onKeyDown={(e) => e.key === "Enter" && handleSave()} placeholder="What needs to be done?" />
           </label>
           <div>
-            <FieldLabel text="Operation" required />
+            <FieldLabel text="Group" required />
             <CustomSelect
-              value={opId}
-              onChange={setOpId}
-              options={store.operations.map((op) => ({ value: op.id, label: op.name }))}
+              value={groupId}
+              onChange={setGroupId}
+              options={groupPickerOptions(store.groups)}
               tokens={tokens}
             />
           </div>
@@ -400,8 +417,8 @@ export function Dashboard() {
     try { await sync(); } finally { setSyncing(false); }
   }
 
-  const defaultOp = store.operations.find((o) => o.isDefault);
-  const opMap = useMemo(() => new Map(store.operations.map((o) => [o.id, o.name])), [store.operations]);
+  const defaultGroup = store.groups.find((g) => g.isDefault);
+  const groupNames = useMemo(() => new Map(store.groups.map((g) => [g.id, g.name])), [store.groups]);
   const activeTasks = useMemo(
     () => store.tasks.filter((t) => t.state !== "completed" && t.state !== "scrapped"),
     [store.tasks]
@@ -432,7 +449,7 @@ export function Dashboard() {
     todo: "To-Do", in_progress: "In Progress", blocked: "Blocked",
   };
 
-  const groups = useMemo(() => {
+  const sections = useMemo(() => {
     if (groupBy === "type") {
       return (["main", "side", "exploration"] as const)
         .map((type) => ({ key: type, title: TYPE_LABELS[type]!, tasks: activeTasks.filter((t) => t.type === type) }))
@@ -443,10 +460,18 @@ export function Dashboard() {
         .map((s) => ({ key: s, title: STATUS_GROUP_LABEL[s]!, tasks: activeTasks.filter((t) => t.state === s) }))
         .filter((g) => g.tasks.length > 0);
     }
-    return store.operations
-      .map((op) => ({ key: op.id, title: op.name, tasks: activeTasks.filter((t) => t.operationId === op.id) }))
-      .filter((g) => g.tasks.length > 0);
-  }, [groupBy, activeTasks, store.operations]);
+    // Tree order, each heading showing its full path, so a nested section is
+    // placed under its parent and two same-named sub-groups stay distinct.
+    return flattenGroupTree(buildGroupTree(store.groups))
+      .map(({ group }) => ({
+        key: group.id,
+        title: [...ancestorGroupIds(group.id, store.groups).reverse(), group.id]
+          .map((id) => groupNames.get(id) ?? "")
+          .join(" › "),
+        tasks: activeTasks.filter((t) => t.groupId === group.id),
+      }))
+      .filter((sec) => sec.tasks.length > 0);
+  }, [groupBy, activeTasks, store.groups, groupNames]);
 
   const timeStats = useMemo(() => {
     const now = new Date();
@@ -627,7 +652,7 @@ export function Dashboard() {
           <PillToggle
             options={[
               { key: "type", label: "By Type" },
-              { key: "operation", label: "By Operation" },
+              { key: "group", label: "By Group" },
               { key: "status", label: "By Task Type" },
             ]}
             value={groupBy}
@@ -636,7 +661,7 @@ export function Dashboard() {
         </div>
 
         <div style={{ flex: 1, overflow: "auto", padding: "20px 24px" }}>
-          {groups.length === 0 && (
+          {sections.length === 0 && (
             <div style={{ textAlign: "center", marginTop: 60, color: tokens.textTertiary }}>
               <div style={{ fontSize: 15, marginBottom: 12 }}>No active tasks</div>
               <button onClick={() => setShowCreateTask(true)} style={{
@@ -647,15 +672,15 @@ export function Dashboard() {
               }}>+ Create your first task</button>
             </div>
           )}
-          {groups.map((group) => (
-            <section key={group.key} style={{ marginBottom: 28 }}>
+          {sections.map((section) => (
+            <section key={section.key} style={{ marginBottom: 28 }}>
               <h2 style={{ fontSize: 11, fontWeight: 700, color: tokens.textSecondary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>
-                {group.title}
-                <span style={{ marginLeft: 7, fontWeight: 400, color: tokens.textTertiary }}>{group.tasks.length}</span>
+                {section.title}
+                <span style={{ marginLeft: 7, fontWeight: 400, color: tokens.textTertiary }}>{section.tasks.length}</span>
               </h2>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                {group.tasks.map((task) => (
-                  <TaskTile key={task.id} task={task} opName={opMap.get(task.operationId) ?? ""} tokens={tokens} onClick={() => setSelectedTask(task)} />
+                {section.tasks.map((task) => (
+                  <TaskTile key={task.id} task={task} groupName={groupNames.get(task.groupId) ?? ""} tokens={tokens} onClick={() => setSelectedTask(task)} />
                 ))}
               </div>
             </section>
@@ -663,14 +688,14 @@ export function Dashboard() {
         </div>
       </div>
 
-      {showCreateTask && defaultOp && (
-        <CreateTaskModal defaultOpId={defaultOp.id} tokens={tokens} onClose={() => setShowCreateTask(false)} />
+      {showCreateTask && defaultGroup && (
+        <CreateTaskModal defaultGroupId={defaultGroup.id} tokens={tokens} onClose={() => setShowCreateTask(false)} />
       )}
       {selectedTask && (
         <TaskModal
           task={selectedTask}
-          allTasksInOp={store.tasks.filter((t) => t.operationId === selectedTask.operationId)}
-          opName={opMap.get(selectedTask.operationId) ?? ""}
+          allTasksInGroup={store.tasks.filter((t) => t.groupId === selectedTask.groupId)}
+          groupName={groupNames.get(selectedTask.groupId) ?? ""}
           tokens={tokens}
           onClose={() => setSelectedTask(null)}
         />

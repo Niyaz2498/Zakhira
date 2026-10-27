@@ -16,7 +16,7 @@ Read the actual code before proposing anything. Report findings, then wait.
 Worth checking every time:
 
 - **Where does the state live?** `packages/core/src/types.ts` is the source of
-  truth for `Task`, `Operation`, `Reminder`. Fields often already exist for what
+  truth for `Task`, `Group`, `Reminder`. Fields often already exist for what
   you need — e.g. `timerStartedAt` was already the exact session anchor an
   hourly-alert feature needed, so the backend needed no change at all.
 - **Is the dependency already installed but unused?** `expo-notifications` sat in
@@ -31,7 +31,7 @@ stated assumption; they can't correct a silent one.
 ## 2. Build
 
 **Shared logic goes in `packages/core/src/rules.ts`.** Both apps import from
-`@zakhira/core`. This is the established pattern — `groupTasksForDisplay` and
+`@zakhira/core`. This is the established pattern — `buildGroupTree` and
 `timerAlertTimes` both live there, consumed by desktop and mobile alike, so the
 two screens cannot drift apart. Write it as a pure function taking an injectable
 `now: Date = new Date()` so it's testable without mocking the clock.
@@ -39,16 +39,17 @@ two screens cannot drift apart. Write it as a pure function taking an injectable
 `packages/core` and `packages/ui` resolve to **source** (`main: ./src/index.ts`),
 so there is no build step to run before the apps see your change.
 
-**Typecheck the four workspaces that pass:**
+**Typecheck every workspace:**
 
 ```sh
-pnpm --filter @zakhira/core --filter @zakhira/ui \
+pnpm --filter @zakhira/core --filter @zakhira/ui --filter @zakhira/backend \
      --filter @zakhira/desktop --filter @zakhira/mobile typecheck
 ```
 
-`@zakhira/backend` has **pre-existing** drizzle typing failures in
-`src/routes/sync.ts` and `src/routes/tasks.ts`. Not yours, don't fix them
-mid-feature, don't let them block you. Plain `pnpm typecheck` will look broken.
+All five pass on a clean tree, `@zakhira/backend` included, so treat any
+failure as yours. (The backend used to have pre-existing drizzle failures in
+`src/routes/sync.ts` and `src/routes/tasks.ts`; those are gone — re-verified
+against `main` in Oct 2026.)
 
 **Verify pure logic before wiring UI to it:**
 

@@ -6,7 +6,7 @@ import { sql, eq } from "drizzle-orm";
 import * as schema from "./db/schema.js";
 import type { Bindings, AppDB } from "./types.js";
 import { verifyPassword, signJwt } from "./utils/crypto.js";
-import operationsRouter from "./routes/operations.js";
+import groupsRouter from "./routes/groups.js";
 import tasksRouter from "./routes/tasks.js";
 import remindersRouter from "./routes/reminders.js";
 import keysRouter from "./routes/keys.js";
@@ -58,7 +58,7 @@ app.post("/auth/login", async (c) => {
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.route("/operations", operationsRouter);
+app.route("/groups", groupsRouter);
 app.route("/tasks", tasksRouter);
 app.route("/reminders", remindersRouter);
 app.route("/keys", keysRouter);

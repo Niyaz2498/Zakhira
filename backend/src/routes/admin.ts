@@ -47,8 +47,8 @@ app.post("/users", async (c) => {
     updatedAt: now,
   });
 
-  // Auto-create a default "General Tasks" operation for the new user
-  await db.insert(schema.operations).values({
+  // Auto-create a default "General Tasks" group for the new user
+  await db.insert(schema.groups).values({
     id: crypto.randomUUID(),
     userId,
     name: "General Tasks",
@@ -96,19 +96,19 @@ app.delete("/users/:id", async (c) => {
   await db.delete(schema.reminders).where(eq(schema.reminders.userId, userId));
 
   // Delete tasks (clear dependency edges first)
-  const ops = await db.query.operations.findMany({ where: eq(schema.operations.userId, userId) });
-  for (const op of ops) {
-    const tasks = await db.query.tasks.findMany({ where: eq(schema.tasks.operationId, op.id) });
+  const userGroups = await db.query.groups.findMany({ where: eq(schema.groups.userId, userId) });
+  for (const group of userGroups) {
+    const tasks = await db.query.tasks.findMany({ where: eq(schema.tasks.groupId, group.id) });
     for (const t of tasks) {
       await db.delete(schema.taskDependencies).where(
         or(eq(schema.taskDependencies.taskId, t.id), eq(schema.taskDependencies.prerequisiteId, t.id))
       );
     }
-    await db.delete(schema.tasks).where(eq(schema.tasks.operationId, op.id));
+    await db.delete(schema.tasks).where(eq(schema.tasks.groupId, group.id));
   }
 
-  // Delete operations then user
-  await db.delete(schema.operations).where(eq(schema.operations.userId, userId));
+  // Delete groups then user
+  await db.delete(schema.groups).where(eq(schema.groups.userId, userId));
   await db.delete(schema.users).where(eq(schema.users.id, userId));
 
   return c.json({ ok: true, data: { deleted: true } });

@@ -3,7 +3,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useStore } from "../store/useStore";
 import { getClient, updateTaskInStore } from "../store";
 import type { Task } from "@zakhira/core";
-import { computeOperationStats } from "@zakhira/core";
+import { computeGroupStats } from "@zakhira/core";
 import type { ColorTokens } from "@zakhira/ui";
 
 type Filter = "all" | "completed" | "scrapped";
@@ -42,8 +42,8 @@ export function TaskHistory() {
   const [error, setError] = useState<string | null>(null);
   const [confirmTask, setConfirmTask] = useState<Task | null>(null);
 
-  const opSet = useMemo(() => new Set(store.operations.map((o) => o.id)), [store.operations]);
-  const opMap = useMemo(() => new Map(store.operations.map((o) => [o.id, o.name])), [store.operations]);
+  const groupIds = useMemo(() => new Set(store.groups.map((g) => g.id)), [store.groups]);
+  const groupNames = useMemo(() => new Map(store.groups.map((g) => [g.id, g.name])), [store.groups]);
 
   const filteredTasks = useMemo(() => {
     return store.tasks
@@ -144,8 +144,8 @@ export function TaskHistory() {
             {/* Task rows */}
             {group.tasks.map((task) => {
               const tc = tierColor(task.type, tokens);
-              const opExists = opSet.has(task.operationId);
-              const opName = opMap.get(task.operationId);
+              const groupExists = groupIds.has(task.groupId);
+              const groupName = groupNames.get(task.groupId);
               const isCompleted = task.state === "completed";
               const stateColor = isCompleted ? tokens.stateCompleted : tokens.stateScrapped;
               const isRecovering = recovering === task.id;
@@ -172,7 +172,7 @@ export function TaskHistory() {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 11, color: tokens.textTertiary }}>
-                        {opName ?? <em style={{ opacity: 0.5 }}>deleted operation</em>}
+                        {groupName ?? <em style={{ opacity: 0.5 }}>deleted group</em>}
                       </span>
                       <span style={{ fontSize: 10, color: tokens.border }}>·</span>
                       <span style={{ fontSize: 11, color: tc }}>{TYPE_LABEL[task.type]}</span>
@@ -201,8 +201,8 @@ export function TaskHistory() {
                     </div>
                   </div>
 
-                  {/* Recover button — only if operation exists */}
-                  {opExists ? (
+                  {/* Recover button — only if the group still exists */}
+                  {groupExists ? (
                     <button
                       onClick={() => setConfirmTask(task)}
                       disabled={isRecovering}
@@ -238,9 +238,12 @@ export function TaskHistory() {
     </div>
 
     {confirmTask && (() => {
-      const opTasks = store.tasks.filter((t) => t.operationId === confirmTask.operationId);
-      const opWasComplete = computeOperationStats(opTasks).isComplete;
-      const opName = opMap.get(confirmTask.operationId);
+      const groupWasComplete = computeGroupStats(
+        confirmTask.groupId,
+        store.groups,
+        store.tasks
+      ).isComplete;
+      const groupName = groupNames.get(confirmTask.groupId);
       const isCompleted = confirmTask.state === "completed";
       const isRecovering = recovering === confirmTask.id;
 
@@ -254,15 +257,15 @@ export function TaskHistory() {
               Recover "{confirmTask.title}"?
             </h2>
 
-            <p style={{ fontSize: 13, color: tokens.textSecondary, lineHeight: 1.6, marginBottom: opWasComplete ? 12 : 0 }}>
+            <p style={{ fontSize: 13, color: tokens.textSecondary, lineHeight: 1.6, marginBottom: groupWasComplete ? 12 : 0 }}>
               This task is marked as <span style={{ fontWeight: 600, color: isCompleted ? tokens.stateCompleted : tokens.stateScrapped }}>{isCompleted ? "Completed" : "Scrapped"}</span>.
               {" "}Recovering it will set it back to <span style={{ fontWeight: 600, color: tokens.stateTodo }}>To-Do</span>.
             </p>
 
-            {opWasComplete && (
+            {groupWasComplete && (
               <div style={{ backgroundColor: tokens.stateBlocked + "18", border: `1px solid ${tokens.stateBlocked}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 0 }}>
                 <p style={{ fontSize: 12, color: tokens.stateBlocked, lineHeight: 1.6, margin: 0 }}>
-                  <span style={{ fontWeight: 700 }}>"{opName}"</span> is fully complete. Recovering this task will mark the operation as in-progress again.
+                  <span style={{ fontWeight: 700 }}>"{groupName}"</span> is fully complete. Recovering this task will mark the group as in-progress again.
                 </p>
               </div>
             )}

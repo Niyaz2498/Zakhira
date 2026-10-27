@@ -22,22 +22,29 @@ export const authMiddleware = createMiddleware<{
   }
 
   const db = drizzle(c.env.DB, { schema }) as AppDB;
-  const userOps = await db.query.operations.findMany({
-    where: eq(schema.operations.userId, userId),
+  const userGroups = await db.query.groups.findMany({
+    where: eq(schema.groups.userId, userId),
     columns: { id: true },
   });
 
   c.set("auth", {
     userId,
-    allowedOperationIds: userOps.map((op) => op.id),
+    allowedGroupIds: userGroups.map((g) => g.id),
   });
 
   await next();
 });
 
-/** Throws 403 if the authenticated user does not own the given operation. */
-export function assertOperationAccess(auth: AuthContext, operationId: string): void {
-  if (!auth.allowedOperationIds.includes(operationId)) {
-    throw new HTTPException(403, { message: "Access denied to this operation" });
+/**
+ * Throws 403 if the authenticated user does not own the given group.
+ *
+ * Nesting needs no special case here: every group the user owns carries their
+ * `user_id`, sub-groups included, so the allow-list already covers whole
+ * subtrees. It is not derived by walking parents — a child is reachable
+ * because it is owned, not because its parent is.
+ */
+export function assertGroupAccess(auth: AuthContext, groupId: string): void {
+  if (!auth.allowedGroupIds.includes(groupId)) {
+    throw new HTTPException(403, { message: "Access denied to this group" });
   }
 }

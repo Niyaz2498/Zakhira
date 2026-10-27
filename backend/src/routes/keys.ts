@@ -15,10 +15,10 @@ async function rowToApiKey(
   db: AppDB,
   row: typeof schema.apiKeys.$inferSelect
 ): Promise<ApiKey> {
-  const opRows =
+  const groupRows =
     row.scope === "scoped"
-      ? await db.query.apiKeyOperations.findMany({
-          where: eq(schema.apiKeyOperations.apiKeyId, row.id),
+      ? await db.query.apiKeyGroups.findMany({
+          where: eq(schema.apiKeyGroups.apiKeyId, row.id),
         })
       : [];
   const key: ApiKey = {
@@ -29,11 +29,11 @@ async function rowToApiKey(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
-  // `operationIds` is optional, and exactOptionalPropertyTypes forbids setting
+  // `groupIds` is optional, and exactOptionalPropertyTypes forbids setting
   // it to undefined explicitly — so omit the key instead. JSON.stringify drops
   // undefined values anyway, so the response body is unchanged.
   if (row.scope === "scoped") {
-    key.operationIds = opRows.map((r) => r.operationId);
+    key.groupIds = groupRows.map((r) => r.groupId);
   }
   return key;
 }
@@ -59,12 +59,12 @@ app.post("/", async (c) => {
   const body = await c.req.json<{
     name: string;
     scope: "all" | "scoped";
-    operationIds?: string[];
+    groupIds?: string[];
   }>();
 
   if (!body.name?.trim()) return c.json({ ok: false, error: "name is required" }, 400);
-  if (body.scope === "scoped" && !body.operationIds?.length) {
-    return c.json({ ok: false, error: "operationIds required for scoped keys" }, 400);
+  if (body.scope === "scoped" && !body.groupIds?.length) {
+    return c.json({ ok: false, error: "groupIds required for scoped keys" }, 400);
   }
 
   const plaintext = generateApiKey();
@@ -84,11 +84,11 @@ app.post("/", async (c) => {
     updatedAt: now,
   });
 
-  if (body.scope === "scoped" && body.operationIds) {
-    for (const opId of body.operationIds) {
+  if (body.scope === "scoped" && body.groupIds) {
+    for (const groupId of body.groupIds) {
       await db
-        .insert(schema.apiKeyOperations)
-        .values({ apiKeyId: id, operationId: opId });
+        .insert(schema.apiKeyGroups)
+        .values({ apiKeyId: id, groupId });
     }
   }
 
@@ -111,7 +111,7 @@ app.delete("/:id", async (c) => {
     return c.json({ ok: false, error: "Not found" }, 404);
   }
 
-  await db.delete(schema.apiKeyOperations).where(eq(schema.apiKeyOperations.apiKeyId, id));
+  await db.delete(schema.apiKeyGroups).where(eq(schema.apiKeyGroups.apiKeyId, id));
   await db.delete(schema.apiKeys).where(eq(schema.apiKeys.id, id));
 
   return c.json({ ok: true, data: { revoked: true } });

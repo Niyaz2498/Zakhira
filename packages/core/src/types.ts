@@ -5,12 +5,14 @@ export type TaskState = "todo" | "in_progress" | "blocked" | "completed" | "scra
 export type Recurrence = "once" | "daily" | "yearly";
 export type KeyScope = "all" | "scoped";
 
-// ─── Operations ──────────────────────────────────────────────────────────────
+// ─── Groups ──────────────────────────────────────────────────────────────────
 
-export interface Operation {
+export interface Group {
   id: string;
   name: string;
   description: string | null;
+  /** Parent group, or null for a top-level group. */
+  parentId: string | null;
   startDate: string | null;
   endDate: string | null;
   importance: number | null;
@@ -19,17 +21,21 @@ export interface Operation {
   updatedAt: string;
 }
 
-export interface CreateOperationInput {
+export interface CreateGroupInput {
   name: string;
   description?: string;
+  /** Omit to create a top-level group. */
+  parentId?: string;
   startDate?: string;
   endDate?: string;
   importance?: number;
 }
 
-export interface UpdateOperationInput {
+export interface UpdateGroupInput {
   name?: string;
   description?: string | null;
+  /** null re-parents the group to the top level. */
+  parentId?: string | null;
   startDate?: string | null;
   endDate?: string | null;
   importance?: number | null;
@@ -39,7 +45,7 @@ export interface UpdateOperationInput {
 
 export interface Task {
   id: string;
-  operationId: string;
+  groupId: string;
   title: string;
   type: TaskType;
   state: TaskState;
@@ -58,7 +64,7 @@ export interface Task {
 
 export interface CreateTaskInput {
   title: string;
-  operationId: string;
+  groupId: string;
   type: TaskType;
   state?: TaskState;
   startDate?: string;
@@ -70,7 +76,7 @@ export interface CreateTaskInput {
 
 export interface UpdateTaskInput {
   title?: string;
-  operationId?: string;
+  groupId?: string;
   type?: TaskType;
   state?: TaskState;
   startDate?: string | null;
@@ -123,19 +129,19 @@ export interface ApiKey {
   createdAt: string;
   updatedAt: string;
   /** only present for scoped keys */
-  operationIds?: string[];
+  groupIds?: string[];
 }
 
 export interface CreateApiKeyInput {
   name: string;
   scope: KeyScope;
-  operationIds?: string[];
+  groupIds?: string[];
 }
 
 // ─── Sync ────────────────────────────────────────────────────────────────────
 
 export interface DeltaSyncResponse {
-  operations: Operation[];
+  groups: Group[];
   tasks: Task[];
   reminders: Reminder[];
   syncedAt: string;
@@ -164,9 +170,9 @@ export interface LoginResponse {
   username: string;
 }
 
-// ─── Operation stats ─────────────────────────────────────────────────────────
+// ─── Group stats ─────────────────────────────────────────────────────────────
 
-export interface OperationStats {
+export interface GroupStats {
   totalMain: number;
   completedMain: number;
   isComplete: boolean;

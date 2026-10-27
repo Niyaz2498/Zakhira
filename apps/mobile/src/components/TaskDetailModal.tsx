@@ -36,13 +36,13 @@ function formatTime(seconds: number): string {
 
 interface Props {
   task: Task | null;
-  opName: string;
+  groupName: string;
   tokens: any;
   onClose: () => void;
   onTaskUpdated: (task: Task) => void;
 }
 
-export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }: Props) {
+export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdated }: Props) {
   const [ct, setCt] = useState<Task | null>(task);
   const [saving, setSaving] = useState(false);
   // Live elapsed seconds computed from ct.timerStartedAt
@@ -171,12 +171,12 @@ export function TaskDetailModal({ task, opName, tokens, onClose, onTaskUpdated }
 
         {ct && (
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 48 }}>
-            {/* Type + operation */}
+            {/* Type + group */}
             <View style={s.metaRow}>
               <Text style={[s.metaText, { color: tierColor }]}>
                 {TYPE_ICONS[ct.type]} {TYPE_LABEL[ct.type]}
               </Text>
-              <Text style={[s.metaText, { color: tokens.textTertiary }]}>{opName}</Text>
+              <Text style={[s.metaText, { color: tokens.textTertiary }]}>{groupName}</Text>
             </View>
 
             {/* Title */}

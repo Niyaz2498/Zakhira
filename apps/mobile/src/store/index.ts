@@ -2,7 +2,7 @@ import * as SecureStore from "expo-secure-store";
 
 declare const process: { env: Record<string, string | undefined> };
 import { ZakhiraClient } from "@zakhira/core";
-import type { Operation, Task, Reminder } from "@zakhira/core";
+import type { Group, Task, Reminder } from "@zakhira/core";
 import { cancelAllTimerAlerts } from "../notifications";
 
 const TOKEN_STORE = "zakhira_token";
@@ -14,7 +14,7 @@ export interface AppStore {
   syncing: boolean;
   token: string | null;
   apiUrl: string;
-  operations: Operation[];
+  groups: Group[];
   tasks: Task[];
   reminders: Reminder[];
   lastSyncedAt: string | null;
@@ -25,7 +25,7 @@ let _store: AppStore = {
   syncing: false,
   token: null,
   apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev",
-  operations: [],
+  groups: [],
   tasks: [],
   reminders: [],
   lastSyncedAt: null,
@@ -80,7 +80,7 @@ export async function sync(): Promise<void> {
     const client = new ZakhiraClient(_store.apiUrl, _store.token!);
     // On cold start (empty store), always do a full sync to get all data.
     // On foreground syncs, use delta to get only changes.
-    const isEmpty = _store.tasks.length === 0 && _store.operations.length === 0;
+    const isEmpty = _store.tasks.length === 0 && _store.groups.length === 0;
     const since = isEmpty ? undefined : (_store.lastSyncedAt ?? undefined);
     const res = await client.sync(since);
     if (!res.ok) {
@@ -88,7 +88,7 @@ export async function sync(): Promise<void> {
       return;
     }
 
-    const { operations, tasks, reminders, syncedAt } = res.data;
+    const { groups, tasks, reminders, syncedAt } = res.data;
 
     const mergeById = <T extends { id: string; updatedAt: string }>(
       existing: T[],
@@ -104,7 +104,7 @@ export async function sync(): Promise<void> {
 
     _store = {
       ..._store,
-      operations: mergeById(_store.operations, operations),
+      groups: mergeById(_store.groups, groups),
       tasks: mergeById(_store.tasks, tasks),
       reminders: mergeById(_store.reminders, reminders),
       lastSyncedAt: syncedAt,
@@ -133,7 +133,7 @@ export async function logout(): Promise<void> {
     syncing: false,
     token: null,
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? "https://zakhira-backend.zakhira.workers.dev",
-    operations: [],
+    groups: [],
     tasks: [],
     reminders: [],
     lastSyncedAt: null,
@@ -156,8 +156,23 @@ export function addTaskToStore(task: Task): void {
   notify();
 }
 
-export function addOperationToStore(op: Operation): void {
-  _store = { ..._store, operations: [..._store.operations, op] };
+export function addGroupToStore(group: Group): void {
+  _store = { ..._store, groups: [..._store.groups, group] };
+  notify();
+}
+
+/** Replace a group in place — used after a re-parent or rename. */
+export function updateGroupInStore(updated: Group): void {
+  _store = { ..._store, groups: _store.groups.map((g) => (g.id === updated.id ? updated : g)) };
+  notify();
+}
+
+/**
+ * Drop a deleted group. The server has already re-parented or removed its
+ * subtree; the next sync reconciles the rest.
+ */
+export function removeGroupFromStore(id: string): void {
+  _store = { ..._store, groups: _store.groups.filter((g) => g.id !== id) };
   notify();
 }
 
