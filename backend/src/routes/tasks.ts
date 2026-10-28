@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, or, asc } from "drizzle-orm";
+import { eq, or, desc } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware, assertGroupAccess } from "../middleware/auth.js";
 import type { Bindings, AuthContext, AppDB } from "../types.js";
@@ -364,7 +364,8 @@ function rowToComment(row: typeof schema.taskComments.$inferSelect): TaskComment
   };
 }
 
-// GET /tasks/:id/comments — oldest first, so the log reads top to bottom.
+// GET /tasks/:id/comments — newest first, matching sortTaskComments, so the
+// apps and a direct API consumer see the log in the same order.
 app.get("/:id/comments", async (c) => {
   const db = drizzle(c.env.DB, { schema }) as AppDB;
   const resolved = await resolveCommentTask(db, c.get("auth"), c.req.param("id"), "read");
@@ -374,7 +375,7 @@ app.get("/:id/comments", async (c) => {
 
   const rows = await db.query.taskComments.findMany({
     where: eq(schema.taskComments.taskId, resolved.task.id),
-    orderBy: [asc(schema.taskComments.createdAt)],
+    orderBy: [desc(schema.taskComments.createdAt)],
   });
   return c.json({ ok: true, data: rows.map(rowToComment) });
 });

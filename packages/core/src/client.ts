@@ -99,7 +99,7 @@ export class ZakhiraClient {
   // ─── Task comments ─────────────────────────────────────────────────────────
 
   /**
-   * All comments on a task, oldest first. Comments are not part of delta sync,
+   * All comments on a task, newest first. Comments are not part of delta sync,
    * so this is the only way to read them — call it when the task opens and let
    * the result replace whatever the screen was holding.
    */

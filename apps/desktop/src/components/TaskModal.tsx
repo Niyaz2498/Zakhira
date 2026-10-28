@@ -706,7 +706,7 @@ export function TaskModal({ task, allTasksInGroup, groupName, tokens, onClose }:
                 {!commentsLoading && !commentsError && comments.length === 0 && (
                   <p style={{ fontSize: 13, color: tokens.textTertiary, margin: "0 0 12px" }}>
                     {canComment
-                      ? "No comments yet. Add one below to record progress as it happens."
+                      ? "No comments yet. Use the box above to record progress as it happens."
                       : "No comments were added to this task."}
                   </p>
                 )}

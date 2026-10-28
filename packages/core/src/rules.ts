@@ -384,18 +384,22 @@ export function timerSessionHours(
 // otherwise the same log reads differently on the phone and the desktop.
 
 /**
- * The log in reading order: oldest first, so a task's story runs top to bottom.
+ * The log in reading order: **newest first**.
  *
- * The backend already sorts by `created_at`, but it sorts on the raw column
- * while this sorts ties by `id` as well — two comments posted inside the same
- * millisecond would otherwise swap places between two fetches and make the list
- * visibly reshuffle.
+ * This pairs with the composer sitting at the top of the Comments section — an
+ * entry you just posted appears directly under the box you typed it in, rather
+ * than at the far end of a log you would have to scroll to see.
+ *
+ * The backend sorts the same way, but on the raw column only, while this sorts
+ * ties by `id` as well: two comments posted inside the same millisecond would
+ * otherwise swap places between two fetches and make the list visibly
+ * reshuffle.
  */
 export function sortTaskComments<T extends { id: string; createdAt: string }>(
   comments: T[],
 ): T[] {
   return [...comments].sort(
-    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+    (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
   );
 }
 

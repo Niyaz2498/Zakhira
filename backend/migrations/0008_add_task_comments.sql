@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS task_comments (
   updated_at TEXT NOT NULL
 );
 
--- Every read is "all comments for this task, oldest first".
+-- Every read is "all comments for this task, ordered by time" — the index
+-- serves the newest-first order the API returns just as well as the reverse.
 CREATE INDEX IF NOT EXISTS idx_task_comments_task_created
   ON task_comments(task_id, created_at);

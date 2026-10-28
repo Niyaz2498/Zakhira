@@ -481,7 +481,7 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
             {!commentsLoading && !commentsError && comments.length === 0 ? (
               <Text style={{ color: tokens.textTertiary, fontSize: 13, marginBottom: 14 }}>
                 {canCommentOnTask(ct)
-                  ? "No comments yet. Add one below to record progress."
+                  ? "No comments yet. Use the box above to record progress."
                   : "No comments were added to this task."}
               </Text>
             ) : null}
