@@ -103,6 +103,9 @@ app.delete("/users/:id", async (c) => {
       await db.delete(schema.taskDependencies).where(
         or(eq(schema.taskDependencies.taskId, t.id), eq(schema.taskDependencies.prerequisiteId, t.id))
       );
+      // task_comments has no ON DELETE CASCADE, so its rows have to go before
+      // the task does or the delete below fails the FK constraint.
+      await db.delete(schema.taskComments).where(eq(schema.taskComments.taskId, t.id));
     }
     await db.delete(schema.tasks).where(eq(schema.tasks.groupId, group.id));
   }

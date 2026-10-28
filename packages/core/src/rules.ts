@@ -375,3 +375,85 @@ export function timerSessionHours(
   // the alert cadence is ever retuned.
   return Math.floor((now.getTime() - startMs) / 3_600_000);
 }
+
+// ─── Task comments ───────────────────────────────────────────────────────────
+//
+// A task's comment log is read straight from the backend when the task opens
+// (comments are not in delta sync), so there is no merging to do here. What
+// both apps do need is to agree on ordering and on how a timestamp is worded,
+// otherwise the same log reads differently on the phone and the desktop.
+
+/**
+ * The log in reading order: oldest first, so a task's story runs top to bottom.
+ *
+ * The backend already sorts by `created_at`, but it sorts on the raw column
+ * while this sorts ties by `id` as well — two comments posted inside the same
+ * millisecond would otherwise swap places between two fetches and make the list
+ * visibly reshuffle.
+ */
+export function sortTaskComments<T extends { id: string; createdAt: string }>(
+  comments: T[],
+): T[] {
+  return [...comments].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+}
+
+/**
+ * How a comment's age is worded in the log header.
+ *
+ * Recent entries read as relative ("12m ago") because that is how progress on
+ * an active task is actually discussed; past a week the absolute date is more
+ * use than "23d ago". An unparseable timestamp returns an empty string rather
+ * than "NaN ago".
+ *
+ * @param createdAt ISO timestamp the comment was posted.
+ * @param now       Current time; injectable for testing.
+ */
+export function formatCommentAge(createdAt: string, now: Date = new Date()): string {
+  const thenMs = new Date(createdAt).getTime();
+  if (Number.isNaN(thenMs)) return "";
+
+  const diffMs = now.getTime() - thenMs;
+  // A clock skew between device and backend can date a comment slightly in the
+  // future; "just now" is truer than a negative age.
+  if (diffMs < 60_000) return "just now";
+
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+
+  return new Date(thenMs).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/**
+ * True if `comment` has been edited since it was posted.
+ *
+ * Compares the two stamps rather than trusting a flag: the backend writes
+ * `updatedAt === createdAt` on insert, so any drift is a real edit.
+ */
+export function isCommentEdited(comment: {
+  createdAt: string;
+  updatedAt: string;
+}): boolean {
+  return comment.updatedAt !== comment.createdAt;
+}
+
+/**
+ * Whether the task's state allows appending to or changing its log.
+ *
+ * Mirrors the backend's `TASK_CLOSED` rule so the input can be hidden rather
+ * than letting the user type a comment into a rejected request.
+ */
+export function canCommentOnTask(task: Pick<Task, "state">): boolean {
+  return task.state !== "completed" && task.state !== "scrapped";
+}

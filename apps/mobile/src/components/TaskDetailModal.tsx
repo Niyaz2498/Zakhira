@@ -5,11 +5,19 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  TextInput,
   StyleSheet,
   ActivityIndicator,
   Alert,
 } from "react-native";
-import type { Task, TaskState } from "@zakhira/core";
+import type { Task, TaskState, TaskComment } from "@zakhira/core";
+import {
+  sortTaskComments,
+  formatCommentAge,
+  isCommentEdited,
+  canCommentOnTask,
+  TASK_COMMENT_MAX_LENGTH,
+} from "@zakhira/core";
 import { getClient, updateTaskInStore } from "../store";
 
 const TYPE_ICONS: Record<string, string> = { main: "⚔", side: "📍", exploration: "⚗" };
@@ -48,10 +56,129 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
   // Live elapsed seconds computed from ct.timerStartedAt
   const [liveElapsed, setLiveElapsed] = useState(0);
 
+  // ─── Comments ──────────────────────────────────────────────────────────────
+  // Comments are not carried by delta sync, so the store has no copy of them:
+  // the log is fetched when the task opens and the response is authoritative.
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+
   // Keep ct in sync when the outer task prop changes (e.g. new task opened)
   useEffect(() => {
     setCt(task);
   }, [task?.id]);
+
+  const loadComments = useCallback(async (taskId: string) => {
+    const client = getClient();
+    if (!client) return;
+    setCommentsLoading(true);
+    setCommentsError(null);
+    try {
+      const res = await client.listTaskComments(taskId);
+      if (res.ok) setComments(sortTaskComments(res.data));
+      else setCommentsError(res.error);
+    } catch {
+      setCommentsError("Couldn't load comments — check your connection.");
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, []);
+
+  // Refetch whenever a different task is opened, and reset any in-flight draft
+  // so a half-typed comment can't land on the wrong task.
+  useEffect(() => {
+    setComments([]);
+    setCommentsError(null);
+    setDraft("");
+    setEditingId(null);
+    setEditDraft("");
+    if (task?.id) loadComments(task.id);
+  }, [task?.id, loadComments]);
+
+  const handleAddComment = useCallback(async () => {
+    const body = draft.trim();
+    if (!ct || !body) return;
+    const client = getClient();
+    if (!client) return;
+    setCommentBusy(true);
+    try {
+      const res = await client.createTaskComment(ct.id, { body });
+      if (res.ok) {
+        setComments((prev) => sortTaskComments([...prev, res.data]));
+        setDraft("");
+      } else {
+        Alert.alert("Couldn't add comment", res.error);
+      }
+    } catch {
+      Alert.alert("Couldn't add comment", "Check your connection and try again.");
+    } finally {
+      setCommentBusy(false);
+    }
+  }, [ct, draft]);
+
+  const handleSaveEdit = useCallback(async () => {
+    const body = editDraft.trim();
+    if (!ct || !editingId || !body) return;
+    const client = getClient();
+    if (!client) return;
+    setCommentBusy(true);
+    try {
+      const res = await client.updateTaskComment(ct.id, editingId, { body });
+      if (res.ok) {
+        setComments((prev) =>
+          sortTaskComments(prev.map((x) => (x.id === res.data.id ? res.data : x)))
+        );
+        setEditingId(null);
+        setEditDraft("");
+      } else {
+        Alert.alert("Couldn't save comment", res.error);
+      }
+    } catch {
+      Alert.alert("Couldn't save comment", "Check your connection and try again.");
+    } finally {
+      setCommentBusy(false);
+    }
+  }, [ct, editingId, editDraft]);
+
+  const handleDeleteComment = useCallback(
+    (comment: TaskComment) => {
+      if (!ct) return;
+      // The backend deletes the row outright — there is no undo, so confirm.
+      Alert.alert("Delete comment?", "This can't be undone.", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            const client = getClient();
+            if (!client) return;
+            setCommentBusy(true);
+            try {
+              const res = await client.deleteTaskComment(ct.id, comment.id);
+              if (res.ok) {
+                setComments((prev) => prev.filter((x) => x.id !== comment.id));
+                if (editingId === comment.id) {
+                  setEditingId(null);
+                  setEditDraft("");
+                }
+              } else {
+                Alert.alert("Couldn't delete comment", res.error);
+              }
+            } catch {
+              Alert.alert("Couldn't delete comment", "Check your connection and try again.");
+            } finally {
+              setCommentBusy(false);
+            }
+          },
+        },
+      ]);
+    },
+    [ct, editingId]
+  );
 
   // Drive the live counter from server-side timerStartedAt
   useEffect(() => {
@@ -170,7 +297,14 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
         </View>
 
         {ct && (
-          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 48 }}>
+          <ScrollView
+            contentContainerStyle={{ padding: 20, paddingBottom: 48 }}
+            // Without this, React Native's default ("never") makes the first tap
+            // while the keyboard is open merely dismiss it — so posting a comment
+            // would take two taps on "Add comment". This is the modal's first
+            // text input, so nothing here relied on the old behaviour.
+            keyboardShouldPersistTaps="handled"
+          >
             {/* Type + group */}
             <View style={s.metaRow}>
               <Text style={[s.metaText, { color: tierColor }]}>
@@ -276,6 +410,175 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                 </View>
               </>
             ) : null}
+
+            {/* Comments — the running log, as opposed to Notes above (the brief) */}
+            <View style={s.commentsHeader}>
+              <Text style={[s.sectionLabel, { color: tokens.textSecondary, marginBottom: 0 }]}>
+                Comments{comments.length ? ` (${comments.length})` : ""}
+              </Text>
+              {commentsLoading && <ActivityIndicator size="small" color={tokens.accent} />}
+            </View>
+
+            {/* Composer — hidden once the task is closed, matching the backend's
+                TASK_CLOSED rule rather than letting the user type into a reject. */}
+            {canCommentOnTask(ct) ? (
+              <View style={s.composer}>
+                <TextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  multiline
+                  maxLength={TASK_COMMENT_MAX_LENGTH}
+                  placeholder="Add a comment…"
+                  placeholderTextColor={tokens.textTertiary}
+                  style={[
+                    s.commentInput,
+                    { color: tokens.textPrimary, borderColor: tokens.border, backgroundColor: tokens.bgCard },
+                  ]}
+                />
+                <TouchableOpacity
+                  onPress={handleAddComment}
+                  disabled={commentBusy || !draft.trim()}
+                  style={[
+                    s.addCommentBtn,
+                    {
+                      backgroundColor: draft.trim() ? tokens.accent : tokens.bgCard,
+                      borderColor: draft.trim() ? tokens.accent : tokens.border,
+                      opacity: commentBusy ? 0.6 : 1,
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={{
+                      color: draft.trim() ? tokens.accentOn : tokens.textTertiary,
+                      fontSize: 15,
+                      fontWeight: "700",
+                    }}
+                  >
+                    {commentBusy ? "Saving…" : "Add comment"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <Text style={{ color: tokens.textTertiary, fontSize: 12, marginBottom: 14 }}>
+                This task is {ct.state === "completed" ? "completed" : "scrapped"} — its comment log
+                is locked.
+              </Text>
+            )}
+
+            {commentsError ? (
+              <TouchableOpacity
+                onPress={() => loadComments(ct.id)}
+                style={[s.commentCard, { backgroundColor: tokens.bgCard, borderColor: "#ef4444" }]}
+              >
+                <Text style={{ color: "#ef4444", fontSize: 13 }}>{commentsError}</Text>
+                <Text style={{ color: tokens.accent, fontSize: 13, fontWeight: "600", marginTop: 6 }}>
+                  Tap to retry
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {!commentsLoading && !commentsError && comments.length === 0 ? (
+              <Text style={{ color: tokens.textTertiary, fontSize: 13, marginBottom: 14 }}>
+                {canCommentOnTask(ct)
+                  ? "No comments yet. Add one below to record progress."
+                  : "No comments were added to this task."}
+              </Text>
+            ) : null}
+
+            {comments.map((comment) => {
+              const isEditing = editingId === comment.id;
+              return (
+                <View
+                  key={comment.id}
+                  style={[s.commentCard, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}
+                >
+                  <View style={s.commentMetaRow}>
+                    <Text style={{ color: tokens.textTertiary, fontSize: 11, fontWeight: "600" }}>
+                      {formatCommentAge(comment.createdAt)}
+                      {isCommentEdited(comment) ? " · edited" : ""}
+                    </Text>
+                    {canCommentOnTask(ct) && !isEditing ? (
+                      <View style={s.commentActions}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setEditingId(comment.id);
+                            setEditDraft(comment.body);
+                          }}
+                          disabled={commentBusy}
+                          hitSlop={8}
+                        >
+                          <Text style={{ color: tokens.accent, fontSize: 12, fontWeight: "700" }}>Edit</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => handleDeleteComment(comment)}
+                          disabled={commentBusy}
+                          hitSlop={8}
+                        >
+                          <Text style={{ color: "#ef4444", fontSize: 12, fontWeight: "700" }}>Delete</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {isEditing ? (
+                    <>
+                      <TextInput
+                        value={editDraft}
+                        onChangeText={setEditDraft}
+                        multiline
+                        maxLength={TASK_COMMENT_MAX_LENGTH}
+                        autoFocus
+                        style={[
+                          s.commentInput,
+                          { color: tokens.textPrimary, borderColor: tokens.accent, backgroundColor: tokens.bgSurface },
+                        ]}
+                      />
+                      <View style={s.commentEditBtnRow}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setEditingId(null);
+                            setEditDraft("");
+                          }}
+                          disabled={commentBusy}
+                          style={[s.commentBtn, { borderWidth: 1, borderColor: tokens.border }]}
+                        >
+                          <Text style={{ color: tokens.textSecondary, fontSize: 13, fontWeight: "700" }}>
+                            Cancel
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={handleSaveEdit}
+                          disabled={commentBusy || !editDraft.trim()}
+                          style={[
+                            s.commentBtn,
+                            {
+                              backgroundColor: editDraft.trim() ? tokens.accent : tokens.bgSurface,
+                              opacity: commentBusy ? 0.6 : 1,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={{
+                              color: editDraft.trim() ? tokens.accentOn : tokens.textTertiary,
+                              fontSize: 13,
+                              fontWeight: "700",
+                            }}
+                          >
+                            Save
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  ) : (
+                    <Text style={{ color: tokens.textPrimary, fontSize: 14, lineHeight: 21 }}>
+                      {comment.body}
+                    </Text>
+                  )}
+                </View>
+              );
+            })}
+
           </ScrollView>
         )}
       </View>
@@ -310,4 +613,40 @@ const s = StyleSheet.create({
   timerBtnStart: { flex: 2 },
   timerBtnText: { fontSize: 15, fontWeight: "700", letterSpacing: 0.3 },
   notesCard: { borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 24 },
+  commentsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  commentCard: { borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 10 },
+  commentMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  commentActions: { flexDirection: "row", gap: 16 },
+  commentInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+    fontSize: 14,
+    lineHeight: 21,
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+  commentEditBtnRow: { flexDirection: "row", gap: 10, marginTop: 10, justifyContent: "flex-end" },
+  commentBtn: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 8 },
+  // Sits at the top of the Comments section, above the log, so adding an entry
+  // never means scrolling past the whole history to reach the input.
+  composer: { marginBottom: 16 },
+  addCommentBtn: {
+    marginTop: 10,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
