@@ -57,6 +57,20 @@ export const tasks = sqliteTable("tasks", {
   updatedAt: text("updated_at").notNull(),
 });
 
+// ─── Task Comments ────────────────────────────────────────────────────────────
+
+// A running log on a task, separate from `tasks.notes` (which is the brief and
+// gets overwritten on every edit). Not part of delta sync — see migration 0008.
+export const taskComments = sqliteTable("task_comments", {
+  id: text("id").primaryKey(),
+  taskId: text("task_id")
+    .notNull()
+    .references(() => tasks.id),
+  body: text("body").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 // ─── Task Dependencies ────────────────────────────────────────────────────────
 
 export const taskDependencies = sqliteTable("task_dependencies", {
@@ -136,9 +150,17 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   }),
   dependenciesAsTask: many(taskDependencies, { relationName: "taskDeps" }),
   dependenciesAsPrereq: many(taskDependencies, { relationName: "prereqDeps" }),
+  comments: many(taskComments),
   reminder: one(reminders, {
     fields: [tasks.reminderId],
     references: [reminders.id],
+  }),
+}));
+
+export const taskCommentsRelations = relations(taskComments, ({ one }) => ({
+  task: one(tasks, {
+    fields: [taskComments.taskId],
+    references: [tasks.id],
   }),
 }));
 

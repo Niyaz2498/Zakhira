@@ -1,14 +1,15 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, or } from "drizzle-orm";
+import { eq, or, desc } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware, assertGroupAccess } from "../middleware/auth.js";
 import type { Bindings, AuthContext, AppDB } from "../types.js";
-import type { Task } from "@zakhira/core";
+import type { Task, TaskComment } from "@zakhira/core";
 import {
   canComplete,
   buildPrereqMap,
   findCycleCreators,
+  TASK_COMMENT_MAX_LENGTH,
 } from "@zakhira/core";
 
 const app = new Hono<{ Bindings: Bindings; Variables: { auth: AuthContext } }>();
@@ -293,8 +294,176 @@ app.delete("/:id", async (c) => {
         eq(schema.taskDependencies.prerequisiteId, id)
       )
     );
+  // The comment log goes with the task. There is no ON DELETE CASCADE on the
+  // FK, matching task_dependencies above, so this has to be explicit — without
+  // it the task row cannot be removed while PRAGMA foreign_keys=ON.
+  await db.delete(schema.taskComments).where(eq(schema.taskComments.taskId, id));
   await db.delete(schema.tasks).where(eq(schema.tasks.id, id));
 
+  return c.json({ ok: true, data: { deleted: true } });
+});
+
+// ─── Comments ─────────────────────────────────────────────────────────────────
+//
+// These live on the tasks router rather than in their own file so they inherit
+// its `authMiddleware` in a single pass; mounting a second router at /tasks
+// would run auth twice per request.
+//
+// Authorization is the task's own: a comment is reachable exactly when the task
+// it hangs off is, so every handler resolves the task first and defers to
+// assertGroupAccess. Comments carry no user_id of their own for the same reason
+// tasks don't — ownership comes from the group.
+
+/**
+ * Resolves the task a comment request is addressed to, or the response to
+ * return instead. `write` additionally enforces the completed/scrapped lock, so
+ * reading a closed task's history stays possible while appending to it does not.
+ */
+async function resolveCommentTask(
+  db: AppDB,
+  auth: AuthContext,
+  taskId: string,
+  mode: "read" | "write"
+): Promise<
+  { task: Task } | { failure: { ok: false; error: string; code?: string }; status: 400 | 404 }
+> {
+  const task = await loadTask(db, taskId);
+  if (!task) return { failure: { ok: false, error: "Not found" }, status: 404 };
+  assertGroupAccess(auth, task.groupId);
+
+  if (mode === "write" && (task.state === "completed" || task.state === "scrapped")) {
+    return {
+      failure: {
+        ok: false,
+        error: `Cannot comment on a ${task.state} task`,
+        code: "TASK_CLOSED",
+      },
+      status: 400,
+    };
+  }
+  return { task };
+}
+
+/** Shared body validation for create and update. Returns the trimmed body. */
+function readCommentBody(raw: unknown): { body: string } | { error: string } {
+  if (typeof raw !== "string" || !raw.trim()) return { error: "body is required" };
+  const body = raw.trim();
+  if (body.length > TASK_COMMENT_MAX_LENGTH) {
+    return { error: `body must be ${TASK_COMMENT_MAX_LENGTH} characters or fewer` };
+  }
+  return { body };
+}
+
+function rowToComment(row: typeof schema.taskComments.$inferSelect): TaskComment {
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    body: row.body,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+// GET /tasks/:id/comments — newest first, matching sortTaskComments, so the
+// apps and a direct API consumer see the log in the same order.
+app.get("/:id/comments", async (c) => {
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const resolved = await resolveCommentTask(db, c.get("auth"), c.req.param("id"), "read");
+  if ("failure" in resolved) {
+    return c.json(resolved.failure, resolved.status);
+  }
+
+  const rows = await db.query.taskComments.findMany({
+    where: eq(schema.taskComments.taskId, resolved.task.id),
+    orderBy: [desc(schema.taskComments.createdAt)],
+  });
+  return c.json({ ok: true, data: rows.map(rowToComment) });
+});
+
+// POST /tasks/:id/comments
+app.post("/:id/comments", async (c) => {
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const resolved = await resolveCommentTask(db, c.get("auth"), c.req.param("id"), "write");
+  if ("failure" in resolved) {
+    return c.json(resolved.failure, resolved.status);
+  }
+
+  const raw = await c.req.json<{ body?: unknown }>();
+  const parsed = readCommentBody(raw.body);
+  if ("error" in parsed) return c.json({ ok: false, error: parsed.error }, 400);
+
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  await db.insert(schema.taskComments).values({
+    id,
+    taskId: resolved.task.id,
+    body: parsed.body,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // The task row is untouched: a comment is not an edit of the task, and
+  // bumping tasks.updatedAt would push a no-op task through delta sync.
+  return c.json(
+    {
+      ok: true,
+      data: { id, taskId: resolved.task.id, body: parsed.body, createdAt: now, updatedAt: now },
+    },
+    201
+  );
+});
+
+// PATCH /tasks/:id/comments/:commentId
+app.patch("/:id/comments/:commentId", async (c) => {
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const resolved = await resolveCommentTask(db, c.get("auth"), c.req.param("id"), "write");
+  if ("failure" in resolved) {
+    return c.json(resolved.failure, resolved.status);
+  }
+
+  const commentId = c.req.param("commentId");
+  const existing = await db.query.taskComments.findFirst({
+    where: eq(schema.taskComments.id, commentId),
+  });
+  // Checking the parent too: a valid comment id under the wrong task is a bad
+  // request, not someone else's comment to edit.
+  if (!existing || existing.taskId !== resolved.task.id) {
+    return c.json({ ok: false, error: "Not found" }, 404);
+  }
+
+  const raw = await c.req.json<{ body?: unknown }>();
+  const parsed = readCommentBody(raw.body);
+  if ("error" in parsed) return c.json({ ok: false, error: parsed.error }, 400);
+
+  const now = new Date().toISOString();
+  await db
+    .update(schema.taskComments)
+    .set({ body: parsed.body, updatedAt: now })
+    .where(eq(schema.taskComments.id, commentId));
+
+  return c.json({
+    ok: true,
+    data: { ...rowToComment(existing), body: parsed.body, updatedAt: now },
+  });
+});
+
+// DELETE /tasks/:id/comments/:commentId — hard delete, no tombstone.
+app.delete("/:id/comments/:commentId", async (c) => {
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+  const resolved = await resolveCommentTask(db, c.get("auth"), c.req.param("id"), "write");
+  if ("failure" in resolved) {
+    return c.json(resolved.failure, resolved.status);
+  }
+
+  const commentId = c.req.param("commentId");
+  const existing = await db.query.taskComments.findFirst({
+    where: eq(schema.taskComments.id, commentId),
+  });
+  if (!existing || existing.taskId !== resolved.task.id) {
+    return c.json({ ok: false, error: "Not found" }, 404);
+  }
+
+  await db.delete(schema.taskComments).where(eq(schema.taskComments.id, commentId));
   return c.json({ ok: true, data: { deleted: true } });
 });
 

@@ -6,6 +6,9 @@ import type {
   Task,
   CreateTaskInput,
   UpdateTaskInput,
+  TaskComment,
+  CreateTaskCommentInput,
+  UpdateTaskCommentInput,
   Reminder,
   CreateReminderInput,
   UpdateReminderInput,
@@ -91,6 +94,41 @@ export class ZakhiraClient {
 
   deleteTask(id: string): Promise<ApiResponse<{ deleted: true }>> {
     return this.request("DELETE", `/tasks/${id}`);
+  }
+
+  // ─── Task comments ─────────────────────────────────────────────────────────
+
+  /**
+   * All comments on a task, newest first. Comments are not part of delta sync,
+   * so this is the only way to read them — call it when the task opens and let
+   * the result replace whatever the screen was holding.
+   */
+  listTaskComments(taskId: string): Promise<ApiResponse<TaskComment[]>> {
+    return this.request("GET", `/tasks/${taskId}/comments`);
+  }
+
+  /** Rejected with code `TASK_CLOSED` once the task is completed or scrapped. */
+  createTaskComment(
+    taskId: string,
+    input: CreateTaskCommentInput
+  ): Promise<ApiResponse<TaskComment>> {
+    return this.request("POST", `/tasks/${taskId}/comments`, input);
+  }
+
+  updateTaskComment(
+    taskId: string,
+    commentId: string,
+    input: UpdateTaskCommentInput
+  ): Promise<ApiResponse<TaskComment>> {
+    return this.request("PATCH", `/tasks/${taskId}/comments/${commentId}`, input);
+  }
+
+  /** A hard delete — the row is gone, not flagged. */
+  deleteTaskComment(
+    taskId: string,
+    commentId: string
+  ): Promise<ApiResponse<{ deleted: true }>> {
+    return this.request("DELETE", `/tasks/${taskId}/comments/${commentId}`);
   }
 
   // ─── Reminders ─────────────────────────────────────────────────────────────

@@ -88,6 +88,36 @@ export interface UpdateTaskInput {
   prerequisites?: string[];
 }
 
+// ─── Task Comments ───────────────────────────────────────────────────────────
+
+/**
+ * One entry in a task's running log. Distinct from `Task.notes`, which is the
+ * brief and is overwritten on every edit — a task has any number of comments.
+ *
+ * Comments are not carried by delta sync. Fetch them per task with
+ * `listTaskComments` and treat the result as authoritative; that is what lets a
+ * delete be a real delete rather than a tombstone.
+ */
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  body: string;
+  createdAt: string;
+  /** Equal to `createdAt` until the comment is edited. */
+  updatedAt: string;
+}
+
+export interface CreateTaskCommentInput {
+  body: string;
+}
+
+export interface UpdateTaskCommentInput {
+  body: string;
+}
+
+/** Longest comment the backend will accept, in characters. */
+export const TASK_COMMENT_MAX_LENGTH = 10_000;
+
 // ─── Reminders ───────────────────────────────────────────────────────────────
 
 export interface Reminder {

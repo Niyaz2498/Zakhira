@@ -7,9 +7,14 @@ import {
   blockingPrerequisites,
   buildGroupTree,
   flattenGroupTree,
+  sortTaskComments,
+  formatCommentAge,
+  isCommentEdited,
+  canCommentOnTask,
+  TASK_COMMENT_MAX_LENGTH,
 } from "@zakhira/core";
 import { DateInput } from "./FormControls";
-import type { Task, TaskType, TaskState, UpdateTaskInput } from "@zakhira/core";
+import type { Task, TaskType, TaskState, UpdateTaskInput, TaskComment } from "@zakhira/core";
 import type { ColorTokens } from "@zakhira/ui";
 
 type Priority = "low" | "medium" | "high";
@@ -301,6 +306,18 @@ export function TaskModal({ task, allTasksInGroup, groupName, tokens, onClose }:
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"scrap" | null>(null);
 
+  // ── Comments ───────────────────────────────────────────────────────────────
+  // Not carried by delta sync, so the store holds no copy: the log is fetched
+  // when the task opens and that response is authoritative.
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentConfirmId, setCommentConfirmId] = useState<string | null>(null);
+
   // Edit state (initialised from task prop)
   const [editTitle, setEditTitle] = useState(task.title);
   const [editType, setEditType] = useState<TaskType>(task.type);
@@ -417,6 +434,78 @@ export function TaskModal({ task, allTasksInGroup, groupName, tokens, onClose }:
     border: `1px solid ${tokens.borderStrong}`, borderRadius: 8, color: tokens.textPrimary,
     fontSize: 14, outline: "none", boxSizing: "border-box",
   };
+
+  // ── Comment actions ────────────────────────────────────────────────────────
+
+  const loadComments = useCallback(async (taskId: string) => {
+    const client = getClient();
+    if (!client) return;
+    setCommentsLoading(true); setCommentsError(null);
+    try {
+      const res = await client.listTaskComments(taskId);
+      if (res.ok) setComments(sortTaskComments(res.data));
+      else setCommentsError(res.error);
+    } catch (e) {
+      setCommentsError(e instanceof Error ? e.message : "Couldn't load comments.");
+    } finally { setCommentsLoading(false); }
+  }, []);
+
+  // Refetch when a different task is opened, dropping any in-flight draft so a
+  // half-typed comment can't land on the wrong task.
+  useEffect(() => {
+    setComments([]); setCommentsError(null); setDraft("");
+    setEditingId(null); setEditDraft(""); setCommentConfirmId(null);
+    loadComments(ct.id);
+  }, [ct.id, loadComments]);
+
+  async function addComment() {
+    const body = draft.trim();
+    if (!body) return;
+    setCommentBusy(true); setCommentsError(null);
+    try {
+      const client = getClient();
+      if (!client) throw new Error("Not connected");
+      const res = await client.createTaskComment(ct.id, { body });
+      if (!res.ok) { setCommentsError(res.error); return; }
+      setComments((prev) => sortTaskComments([...prev, res.data]));
+      setDraft("");
+    } catch (e) {
+      setCommentsError(e instanceof Error ? e.message : "Failed to add comment.");
+    } finally { setCommentBusy(false); }
+  }
+
+  async function saveCommentEdit() {
+    const body = editDraft.trim();
+    if (!editingId || !body) return;
+    setCommentBusy(true); setCommentsError(null);
+    try {
+      const client = getClient();
+      if (!client) throw new Error("Not connected");
+      const res = await client.updateTaskComment(ct.id, editingId, { body });
+      if (!res.ok) { setCommentsError(res.error); return; }
+      setComments((prev) => sortTaskComments(prev.map((x) => (x.id === res.data.id ? res.data : x))));
+      setEditingId(null); setEditDraft("");
+    } catch (e) {
+      setCommentsError(e instanceof Error ? e.message : "Failed to save comment.");
+    } finally { setCommentBusy(false); }
+  }
+
+  async function deleteComment(commentId: string) {
+    setCommentBusy(true); setCommentsError(null);
+    try {
+      const client = getClient();
+      if (!client) throw new Error("Not connected");
+      const res = await client.deleteTaskComment(ct.id, commentId);
+      if (!res.ok) { setCommentsError(res.error); return; }
+      setComments((prev) => prev.filter((x) => x.id !== commentId));
+      setCommentConfirmId(null);
+      if (editingId === commentId) { setEditingId(null); setEditDraft(""); }
+    } catch (e) {
+      setCommentsError(e instanceof Error ? e.message : "Failed to delete comment.");
+    } finally { setCommentBusy(false); }
+  }
+
+  const canComment = canCommentOnTask(ct);
 
   return (
     <div
@@ -546,6 +635,184 @@ export function TaskModal({ task, allTasksInGroup, groupName, tokens, onClose }:
               {!ct.notes && prereqTasks.length === 0 && !ct.startDate && !ct.endDate && (
                 <p style={{ color: tokens.textTertiary, fontSize: 13 }}>No additional details.</p>
               )}
+
+              {/* ── Comments: the running log, as against Notes above (the brief) ── */}
+              <div style={{ marginTop: 22, borderTop: `1px solid ${tokens.border}`, paddingTop: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, color: tokens.textTertiary, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Comments{comments.length ? ` (${comments.length})` : ""}
+                  </div>
+                  {commentsLoading && (
+                    <span style={{ fontSize: 11, color: tokens.textTertiary }}>loading…</span>
+                  )}
+                </div>
+
+                {/* Composer — hidden once the task closes, matching the backend's
+                    TASK_CLOSED rule rather than typing into a rejected request. */}
+                {canComment ? (
+                  <div style={{ marginBottom: 14 }}>
+                    <textarea
+                      style={{ ...inp, resize: "vertical", minHeight: 72, fontFamily: "inherit", lineHeight: 1.6 }}
+                      value={draft}
+                      maxLength={TASK_COMMENT_MAX_LENGTH}
+                      placeholder="Add a comment…"
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Cmd/Ctrl+Enter submits; a bare Enter stays a newline,
+                        // since these are paragraphs more often than one-liners.
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          void addComment();
+                        }
+                      }}
+                    />
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                      <span style={{ fontSize: 11, color: tokens.textTertiary, flex: 1 }}>
+                        ⌘/Ctrl + Enter to post
+                      </span>
+                      <button
+                        onClick={addComment}
+                        disabled={commentBusy || !draft.trim()}
+                        style={{
+                          padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none",
+                          cursor: draft.trim() ? "pointer" : "not-allowed",
+                          backgroundColor: draft.trim() ? tokens.accent : tokens.border,
+                          color: draft.trim() ? tokens.accentOn : tokens.textTertiary,
+                          opacity: commentBusy ? 0.6 : 1,
+                        }}
+                      >
+                        {commentBusy ? "Saving…" : "Add comment"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 12, color: tokens.textTertiary, margin: "10px 0 0" }}>
+                    This task is {ct.state === "completed" ? "completed" : "scrapped"} — its comment log is locked.
+                  </p>
+                )}
+
+                {commentsError && (
+                  <div style={{ fontSize: 12, color: "#e05555", marginBottom: 10 }}>
+                    {commentsError}{" "}
+                    <button
+                      onClick={() => loadComments(ct.id)}
+                      style={{ background: "none", border: "none", color: tokens.accent, cursor: "pointer", fontSize: 12, fontWeight: 600, padding: 0 }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {!commentsLoading && !commentsError && comments.length === 0 && (
+                  <p style={{ fontSize: 13, color: tokens.textTertiary, margin: "0 0 12px" }}>
+                    {canComment
+                      ? "No comments yet. Use the box above to record progress as it happens."
+                      : "No comments were added to this task."}
+                  </p>
+                )}
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {comments.map((comment) => {
+                    const isEditing = editingId === comment.id;
+                    const isConfirming = commentConfirmId === comment.id;
+                    return (
+                      <div
+                        key={comment.id}
+                        style={{
+                          backgroundColor: tokens.bgCard,
+                          border: `1px solid ${isEditing ? tokens.accent : tokens.border}`,
+                          borderRadius: 10, padding: "11px 13px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7 }}>
+                          <span style={{ fontSize: 11, color: tokens.textTertiary, fontWeight: 600, flex: 1 }}>
+                            {formatCommentAge(comment.createdAt)}
+                            {isCommentEdited(comment) ? " · edited" : ""}
+                          </span>
+
+                          {canComment && !isEditing && !isConfirming && (
+                            <>
+                              <button
+                                onClick={() => { setEditingId(comment.id); setEditDraft(comment.body); }}
+                                disabled={commentBusy}
+                                style={{ background: "none", border: "none", color: tokens.accent, cursor: "pointer", fontSize: 12, fontWeight: 600, padding: 0 }}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => setCommentConfirmId(comment.id)}
+                                disabled={commentBusy}
+                                style={{ background: "none", border: "none", color: "#e05555", cursor: "pointer", fontSize: 12, fontWeight: 600, padding: 0 }}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+
+                          {/* Hard delete — the row is gone for good, so confirm inline,
+                              the same way scrapping a task does in the footer. */}
+                          {isConfirming && (
+                            <>
+                              <span style={{ fontSize: 12, color: tokens.textSecondary }}>Delete for good?</span>
+                              <button
+                                onClick={() => setCommentConfirmId(null)}
+                                style={{ background: "none", border: "none", color: tokens.textSecondary, cursor: "pointer", fontSize: 12, fontWeight: 600, padding: 0 }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => deleteComment(comment.id)}
+                                disabled={commentBusy}
+                                style={{ background: "none", border: "none", color: "#e05555", cursor: "pointer", fontSize: 12, fontWeight: 700, padding: 0, opacity: commentBusy ? 0.6 : 1 }}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+
+                        {isEditing ? (
+                          <>
+                            <textarea
+                              style={{ ...inp, resize: "vertical", minHeight: 72, fontFamily: "inherit", lineHeight: 1.6 }}
+                              value={editDraft}
+                              maxLength={TASK_COMMENT_MAX_LENGTH}
+                              autoFocus
+                              onChange={(e) => setEditDraft(e.target.value)}
+                            />
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+                              <button
+                                onClick={() => { setEditingId(null); setEditDraft(""); }}
+                                style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${tokens.border}`, color: tokens.textSecondary, backgroundColor: tokens.bgSurface, cursor: "pointer", fontSize: 12 }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={saveCommentEdit}
+                                disabled={commentBusy || !editDraft.trim()}
+                                style={{
+                                  padding: "6px 16px", borderRadius: 7, fontSize: 12, fontWeight: 600, border: "none",
+                                  cursor: editDraft.trim() ? "pointer" : "not-allowed",
+                                  backgroundColor: editDraft.trim() ? tokens.accent : tokens.border,
+                                  color: editDraft.trim() ? tokens.accentOn : tokens.textTertiary,
+                                  opacity: commentBusy ? 0.6 : 1,
+                                }}
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <p style={{ fontSize: 14, color: tokens.textSecondary, lineHeight: 1.6, whiteSpace: "pre-wrap", margin: 0 }}>
+                            {comment.body}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+              </div>
             </>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

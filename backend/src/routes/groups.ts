@@ -176,6 +176,20 @@ app.patch("/:id", async (c) => {
   return c.json({ ok: true, data: toGroup(updated!) });
 });
 
+/**
+ * Drop the comment log of every one of these tasks.
+ *
+ * task_comments has a plain FK with no ON DELETE CASCADE (matching
+ * task_dependencies), so this has to run before the task rows go or the delete
+ * fails the constraint — which is exactly what it did the first time a
+ * cascading group delete met a commented task.
+ */
+async function clearComments(db: AppDB, taskIds: string[]): Promise<void> {
+  for (const taskId of taskIds) {
+    await db.delete(schema.taskComments).where(eq(schema.taskComments.taskId, taskId));
+  }
+}
+
 /** Drop every dependency edge touching these tasks, in either direction. */
 async function clearDependencies(db: AppDB, taskIds: string[]): Promise<void> {
   for (const taskId of taskIds) {
@@ -217,6 +231,7 @@ app.delete("/:id", async (c) => {
     });
 
     await clearDependencies(db, doomedTasks.map((t) => t.id));
+    await clearComments(db, doomedTasks.map((t) => t.id));
     for (const t of doomedTasks) {
       await db.delete(schema.tasks).where(eq(schema.tasks.id, t.id));
     }
