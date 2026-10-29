@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Modal,
   View,
@@ -9,6 +9,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Keyboard,
 } from "react-native";
 import type { Task, TaskState, TaskComment } from "@zakhira/core";
 import {
@@ -66,6 +67,60 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+
+  // ─── Keeping the focused input above the keyboard ──────────────────────────
+  //
+  // The modal is a plain ScrollView, which does not scroll a newly focused
+  // input into view. Android resizes the window for the keyboard, so the
+  // composer is not painted over — it ends up below the shortened viewport,
+  // which looks identical to being hidden and is why typing a comment meant
+  // scrolling blind.
+  //
+  // Fix: remember where the composer and each comment card sit inside the
+  // scroll content, then scroll the one being edited to the top of what is
+  // still visible once the keyboard is up.
+  const scrollRef = useRef<ScrollView>(null);
+  const composerY = useRef(0);
+  const cardY = useRef<Record<string, number>>({});
+  const [kbHeight, setKbHeight] = useState(0);
+
+  useEffect(() => {
+    // "...DidShow" rather than "...WillShow": Android only emits the Did pair.
+    const show = Keyboard.addListener("keyboardDidShow", (e) =>
+      setKbHeight(e.endCoordinates.height)
+    );
+    const hide = Keyboard.addListener("keyboardDidHide", () => setKbHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  /**
+   * Remember what to bring into view; the effect below does the scrolling.
+   *
+   * It cannot scroll here and be done with it. Focus fires before the keyboard
+   * is up, so `kbHeight` is still 0 and the extra bottom padding has not been
+   * added yet — a scroll at this moment is clamped to the shorter content and
+   * silently lands short, which is exactly how this looked when it was broken.
+   */
+  const pendingScrollY = useRef<number | null>(null);
+  const scrollIntoView = useCallback((y: number) => {
+    pendingScrollY.current = y;
+  }, []);
+
+  // Driven by the keyboard height rather than a timer: by the time this runs,
+  // the padding that makes the target reachable is already in the layout.
+  useEffect(() => {
+    if (kbHeight === 0 || pendingScrollY.current === null) return;
+    const target = Math.max(pendingScrollY.current - 12, 0);
+    pendingScrollY.current = null;
+    // One frame's grace so the re-render carrying the padding has committed.
+    const id = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: target, animated: true });
+    }, 50);
+    return () => clearTimeout(id);
+  }, [kbHeight]);
 
   // Keep ct in sync when the outer task prop changes (e.g. new task opened)
   useEffect(() => {
@@ -298,7 +353,12 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
 
         {ct && (
           <ScrollView
-            contentContainerStyle={{ padding: 20, paddingBottom: 48 }}
+            ref={scrollRef}
+            // The extra bottom padding while the keyboard is up is what makes
+            // the composer reachable at all: without room to scroll past, a
+            // task with few comments cannot scroll far enough to lift it clear.
+            // It collapses the moment the keyboard closes.
+            contentContainerStyle={{ padding: 20, paddingBottom: 48 + kbHeight }}
             // Without this, React Native's default ("never") makes the first tap
             // while the keyboard is open merely dismiss it — so posting a comment
             // would take two taps on "Add comment". This is the modal's first
@@ -422,7 +482,12 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
             {/* Composer — hidden once the task is closed, matching the backend's
                 TASK_CLOSED rule rather than letting the user type into a reject. */}
             {canCommentOnTask(ct) ? (
-              <View style={s.composer}>
+              <View
+                style={s.composer}
+                onLayout={(e) => {
+                  composerY.current = e.nativeEvent.layout.y;
+                }}
+              >
                 <TextInput
                   value={draft}
                   onChangeText={setDraft}
@@ -430,6 +495,7 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                   maxLength={TASK_COMMENT_MAX_LENGTH}
                   placeholder="Add a comment…"
                   placeholderTextColor={tokens.textTertiary}
+                  onFocus={() => scrollIntoView(composerY.current)}
                   style={[
                     s.commentInput,
                     { color: tokens.textPrimary, borderColor: tokens.border, backgroundColor: tokens.bgCard },
@@ -492,6 +558,9 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                 <View
                   key={comment.id}
                   style={[s.commentCard, { backgroundColor: tokens.bgCard, borderColor: tokens.border }]}
+                  onLayout={(e) => {
+                    cardY.current[comment.id] = e.nativeEvent.layout.y;
+                  }}
                 >
                   <View style={s.commentMetaRow}>
                     <Text style={{ color: tokens.textTertiary, fontSize: 11, fontWeight: "600" }}>
@@ -504,6 +573,9 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                           onPress={() => {
                             setEditingId(comment.id);
                             setEditDraft(comment.body);
+                            // The edit field autofocuses, so the keyboard opens
+                            // without a focus event of our own to hang this off.
+                            scrollIntoView(cardY.current[comment.id] ?? 0);
                           }}
                           disabled={commentBusy}
                           hitSlop={8}
