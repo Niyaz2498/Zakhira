@@ -3,9 +3,11 @@ import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { ColorTokens } from "@zakhira/ui";
 import {
+  CALENDAR_WEEKS,
   buildMonthGrid,
   formatMonthLabel,
   initialCalendarMonth,
+  isDateKeyBefore,
   parseDateKey,
   shiftMonth,
   todayKey,
@@ -26,19 +28,9 @@ const WEEKDAY_INITIALS = ["M", "T", "W", "T", "F", "S", "S"];
 /** Side of a day cell's highlight. 7 × 40 fits the narrowest phone we target. */
 const PILL = 40;
 /** Vertical breathing room above and below each cell. */
-const CELL_PAD = 2;
-/** The "something is due" marker under a day, and its gap from the pill. */
-const DOT = 5;
-const DOT_GAP = 2;
+const CELL_PAD = 3;
 
-const ROW_HEIGHT = PILL + DOT_GAP + DOT + CELL_PAD * 2;
-/**
- * A month needs at most six rows (31 days that start on a Sunday). The grid is
- * held at that height whatever the month, because the alternative is a sheet
- * that changes height as you page: the arrows and the footer would shift under
- * your finger between a 4-row February and a 6-row November.
- */
-const MAX_WEEKS = 6;
+const ROW_HEIGHT = PILL + CELL_PAD * 2;
 
 export interface CalendarProps {
   /** Currently chosen day as `YYYY-MM-DD`, or null/"" for none. */
@@ -46,27 +38,39 @@ export interface CalendarProps {
   onSelect: (dateKey: string) => void;
   tokens: ColorTokens;
   /**
-   * Days to mark with a dot — in the task form, work that is already due then.
-   * The dot is information, not a restriction: marked days select like any
-   * other.
+   * Earliest selectable day, `YYYY-MM-DD`. Days before it render dimmed and
+   * do not respond, and the calendar will not page back past its month.
+   *
+   * Left off, any day is fair game — the restriction belongs to the caller,
+   * not to calendars in general. A due date passes today; a date of birth
+   * would want the opposite bound.
    */
-  markedDates?: readonly string[];
+  minDate?: string;
   /** Today, as a date key. Injectable so a screenshot test can pin it. */
   today?: string;
 }
 
-export function Calendar({ value, onSelect, tokens, markedDates, today }: CalendarProps) {
+export function Calendar({ value, onSelect, tokens, minDate, today }: CalendarProps) {
   const now = today ?? todayKey();
   // The month the user is looking at. Opens on the chosen date so an existing
   // value is visible without navigating to find it.
   const [view, setView] = useState(() => initialCalendarMonth(value));
   const weeks = useMemo(() => buildMonthGrid(view.year, view.month), [view]);
-  const marks = useMemo(() => new Set(markedDates ?? []), [markedDates]);
+
+  const todayMonth = useMemo(() => parseDateKey(now), [now]);
+  const onTodayMonth =
+    todayMonth !== null && view.year === todayMonth.year && view.month === todayMonth.month;
+
+  // Paging back into a month with nothing selectable in it is a dead end, so
+  // the arrow is stopped at the month the minimum falls in.
+  const floor = useMemo(() => (minDate ? parseDateKey(minDate) : null), [minDate]);
+  const canGoBack =
+    floor === null || view.year * 12 + view.month > floor.year * 12 + floor.month;
 
   /**
-   * Tapping a lead-in day (the greyed tail of the previous month) selects it
-   * *and* follows it, so the calendar never shows a selection the user can see
-   * but the header disagrees with.
+   * Tapping a padding day — the dimmed tail of the previous month or head of
+   * the next — selects it *and* follows it, so the calendar never shows a
+   * selection the user can see but the header disagrees with.
    */
   function select(dateKey: string, inMonth: boolean) {
     if (!inMonth) {
@@ -81,17 +85,44 @@ export function Calendar({ value, onSelect, tokens, markedDates, today }: Calend
       <View style={s.header}>
         <TouchableOpacity
           onPress={() => setView(shiftMonth(view.year, view.month, -1))}
-          style={[s.navBtn, { borderColor: tokens.border, backgroundColor: tokens.bgCard }]}
+          disabled={!canGoBack}
+          style={[
+            s.navBtn,
+            { borderColor: tokens.border, backgroundColor: tokens.bgCard },
+            !canGoBack && s.navBtnDisabled,
+          ]}
           accessibilityRole="button"
           accessibilityLabel="Previous month"
+          accessibilityState={{ disabled: !canGoBack }}
           activeOpacity={0.7}
         >
-          <Ionicons name="chevron-back" size={18} color={tokens.textSecondary} />
+          <Ionicons
+            name="chevron-back"
+            size={18}
+            color={canGoBack ? tokens.textSecondary : tokens.textTertiary}
+          />
         </TouchableOpacity>
 
-        <Text style={[s.monthLabel, { color: tokens.textPrimary }]}>
-          {formatMonthLabel(view.year, view.month)}
-        </Text>
+        {/* Label and the "Today" return travel together as one centred group,
+            so the month name does not jump sideways when the button appears. */}
+        <View style={s.headerCenter}>
+          <Text style={[s.monthLabel, { color: tokens.textPrimary }]} numberOfLines={1}>
+            {formatMonthLabel(view.year, view.month)}
+          </Text>
+          {/* Shown only when there is somewhere to go back to — on this month
+              it would be a button that does nothing. */}
+          {!onTodayMonth && todayMonth !== null && (
+            <TouchableOpacity
+              onPress={() => setView({ year: todayMonth.year, month: todayMonth.month })}
+              style={[s.todayBtn, { borderColor: tokens.accent }]}
+              accessibilityRole="button"
+              accessibilityLabel="Go to this month"
+              activeOpacity={0.7}
+            >
+              <Text style={[s.todayBtnText, { color: tokens.accent }]}>Today</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <TouchableOpacity
           onPress={() => setView(shiftMonth(view.year, view.month, 1))}
@@ -115,13 +146,12 @@ export function Calendar({ value, onSelect, tokens, markedDates, today }: Calend
       <View style={s.grid}>
         {weeks.map((week, w) => (
           <View key={w} style={s.row}>
-            {week.map((day, d) => {
-              // Blank tail cells keep the final row's columns aligned.
-              if (!day) return <View key={`blank-${d}`} style={s.cell} />;
-
+            {week.map((day) => {
               const selected = day.key === value;
               const isToday = day.key === now;
-              const marked = marks.has(day.key);
+              // A value already saved before the bound existed still shows as
+              // chosen; it just cannot be re-picked.
+              const blocked = minDate !== undefined && isDateKeyBefore(day.key, minDate);
 
               const textColor = selected
                 ? tokens.accentOn
@@ -140,9 +170,10 @@ export function Calendar({ value, onSelect, tokens, markedDates, today }: Calend
                   key={day.key}
                   style={s.cell}
                   onPress={() => select(day.key, day.inMonth)}
+                  disabled={blocked}
                   activeOpacity={0.7}
                   accessibilityRole="button"
-                  accessibilityState={{ selected }}
+                  accessibilityState={{ selected, disabled: blocked }}
                   accessibilityLabel={day.key}
                 >
                   <View
@@ -151,7 +182,13 @@ export function Calendar({ value, onSelect, tokens, markedDates, today }: Calend
                       selected && { backgroundColor: tokens.accent },
                       // Today is outlined rather than filled, so it stays
                       // legible next to the day that is actually chosen.
-                      isToday && !selected && { borderWidth: 1.5, borderColor: tokens.accent },
+                      //
+                      // Only the *colour* switches: the width is fixed in
+                      // `s.pill`. Taking the border away on update — which is
+                      // exactly what selecting today used to do — made Android
+                      // recompute the `overflow: hidden` clip and swallow the
+                      // digit, leaving a filled pill with no number on it.
+                      isToday && !selected && { borderColor: tokens.accent },
                     ]}
                   >
                     <Text
@@ -159,27 +196,18 @@ export function Calendar({ value, onSelect, tokens, markedDates, today }: Calend
                         s.dayText,
                         { color: textColor },
                         (selected || isToday) && { fontWeight: "700" },
-                        // Dimmer than textTertiary alone: last month's days
-                        // are context, and must not compete with this month's.
+                        // Dimmer than textTertiary alone: the neighbouring
+                        // months are context, and must not compete with this
+                        // month's days.
                         !day.inMonth && !selected && { opacity: 0.55 },
+                        // Fainter still for a day that cannot be chosen, so
+                        // "past" reads differently from "another month".
+                        blocked && !selected && { color: tokens.textTertiary, opacity: 0.3 },
                       ]}
                     >
                       {day.day}
                     </Text>
                   </View>
-                  {/* Always rendered, transparent when unmarked, so a dot
-                      appearing never shifts the row. It sits *below* the pill,
-                      on the sheet — so it takes the accent when selected, not
-                      `accentOn`: that token is for ink on an accent fill and
-                      is near-invisible against the sheet in both themes. */}
-                  <View
-                    style={[
-                      s.dot,
-                      marked && {
-                        backgroundColor: selected ? tokens.accent : tokens.textTertiary,
-                      },
-                    ]}
-                  />
                 </TouchableOpacity>
               );
             })}
@@ -205,25 +233,45 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  monthLabel: { fontSize: 17, fontWeight: "600" },
-  grid: { minHeight: ROW_HEIGHT * MAX_WEEKS },
+  // Kept in place rather than hidden: a control that vanishes at the boundary
+  // would shift the header and leave you unsure the arrow was ever there.
+  navBtnDisabled: { opacity: 0.4 },
+  headerCenter: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  monthLabel: { fontSize: 17, fontWeight: "600", flexShrink: 1 },
+  todayBtn: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  todayBtnText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.3 },
+  grid: { height: ROW_HEIGHT * CALENDAR_WEEKS },
   // The M/T/W header deliberately takes a full day-row height: it is what sets
   // the gap between the initials and the first week.
   weekdayRow: { flexDirection: "row", height: ROW_HEIGHT },
   row: { flexDirection: "row", height: ROW_HEIGHT },
   cell: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: CELL_PAD },
-  weekday: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    paddingVertical: 8,
-  },
+  weekday: { fontSize: 11, fontWeight: "700", letterSpacing: 0.6 },
   pill: {
     width: PILL,
     height: PILL,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
+    // Always bordered, usually invisibly. Every cell therefore has the same
+    // content box, so a day does not shift by a pixel and a half when it
+    // becomes "today", and the width never changes on a re-render (see the
+    // note at the call site — that is what blanked the selected cell).
+    // A transparent border still shows the fill beneath it, so a selected
+    // day reads as a solid pill, not a ring.
+    borderWidth: 1.5,
+    borderColor: "transparent",
     // Both of these are load-bearing on Android, and the symptom is visible:
     // a cell that gains its fill on re-render (i.e. the day you just tapped)
     // draws as a hard-cornered square while the cell selected at mount draws
@@ -234,14 +282,4 @@ const s = StyleSheet.create({
     overflow: "hidden",
   },
   dayText: { fontSize: 15 },
-  // `overflow` for the same Android reason as `pill`: a dot that gains its
-  // colour on re-render draws as a square without it.
-  dot: {
-    width: DOT,
-    height: DOT,
-    borderRadius: DOT / 2,
-    marginTop: DOT_GAP,
-    backgroundColor: "transparent",
-    overflow: "hidden",
-  },
 });

@@ -451,6 +451,18 @@ export function isValidDateKey(value: string): boolean {
   return parseDateKey(value) !== null;
 }
 
+/**
+ * True if `key` falls strictly before `other`.
+ *
+ * A plain string compare is already chronological here: the format is
+ * fixed-width and zero-padded, most-significant part first. No `Date` objects
+ * and so no timezone to get wrong — which is the whole reason dates are stored
+ * in this shape.
+ */
+export function isDateKeyBefore(key: string, other: string): boolean {
+  return key < other;
+}
+
 /** Number of days in a month. @param month 1–12. */
 export function daysInMonth(year: number, month: number): number {
   // Day 0 of the next month is the last day of this one.
@@ -503,22 +515,32 @@ export interface CalendarDay {
   key: string;
   /** Day of the month, 1–31. */
   day: number;
-  /** False for the previous month's days that pad the first row. */
+  /** False for the neighbouring months' days that pad the grid at either end. */
   inMonth: boolean;
 }
 
-/** A row of the grid. `null` is a blank cell. */
-export type CalendarWeek = (CalendarDay | null)[];
+/** A row of the grid: always seven real days. */
+export type CalendarWeek = CalendarDay[];
+
+/**
+ * Rows in a month grid.
+ *
+ * Always six. A month needs at most six (31 days first falling on a Sunday)
+ * and the grid is built to that size whatever the month, so the calendar is a
+ * fixed block: the controls around it cannot shift between a short February
+ * and a long November.
+ */
+export const CALENDAR_WEEKS = 6;
 
 /**
  * The weeks of a month, Monday-first, ready to render.
  *
- * The first row is padded with the tail of the *previous* month, so the 1st
- * lands under its real weekday; those cells carry genuine dates and are meant
- * to be rendered dimmed but still selectable. The grid then **stops at the last
- * day of the month** — the final row is padded with blanks rather than with the
- * next month's days, so the height of the sheet tracks the month and no row of
- * numbers trails past the end of it.
+ * Every cell is a real, selectable date. The grid is padded at *both* ends
+ * from the neighbouring months — the previous month's tail so the 1st lands
+ * under its true weekday, the next month's head so the block is always a
+ * complete 6 × 7. Padding days carry `inMonth: false` and are meant to render
+ * dimmed; they are still genuine dates, so a picker can let you tap into the
+ * next month without paging to it first.
  *
  * @param month 1–12.
  */
@@ -526,8 +548,9 @@ export function buildMonthGrid(year: number, month: number): CalendarWeek[] {
   const lead = weekdayIndex(year, month, 1);
   const previous = shiftMonth(year, month, -1);
   const previousLength = daysInMonth(previous.year, previous.month);
+  const next = shiftMonth(year, month, 1);
 
-  const cells: (CalendarDay | null)[] = [];
+  const cells: CalendarDay[] = [];
   for (let i = lead; i > 0; i--) {
     const day = previousLength - i + 1;
     cells.push({ key: dateKey(previous.year, previous.month, day), day, inMonth: false });
@@ -535,7 +558,9 @@ export function buildMonthGrid(year: number, month: number): CalendarWeek[] {
   for (let day = 1; day <= daysInMonth(year, month); day++) {
     cells.push({ key: dateKey(year, month, day), day, inMonth: true });
   }
-  while (cells.length % 7 !== 0) cells.push(null);
+  for (let day = 1; cells.length < CALENDAR_WEEKS * 7; day++) {
+    cells.push({ key: dateKey(next.year, next.month, day), day, inMonth: false });
+  }
 
   const weeks: CalendarWeek[] = [];
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));

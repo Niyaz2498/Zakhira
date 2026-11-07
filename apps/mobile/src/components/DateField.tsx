@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, Pressable, Modal, StyleSheet } from "reac
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import type { ColorTokens } from "@zakhira/ui";
-import { formatDateKeyLong, isValidDateKey } from "@zakhira/core";
+import { formatDateKeyLong, isDateKeyBefore, isValidDateKey } from "@zakhira/core";
 import { Calendar } from "./Calendar";
 
 /**
@@ -31,8 +31,8 @@ export interface DatePickerSheetProps {
   onChange: (dateKey: string) => void;
   onClose: () => void;
   tokens: ColorTokens;
-  /** Days to dot — e.g. other work already due. */
-  markedDates?: readonly string[];
+  /** Earliest selectable day, `YYYY-MM-DD`. Omit for no lower bound. */
+  minDate?: string;
 }
 
 export function DatePickerSheet({
@@ -41,7 +41,7 @@ export function DatePickerSheet({
   onChange,
   onClose,
   tokens,
-  markedDates,
+  minDate,
 }: DatePickerSheetProps) {
   const insets = useSafeAreaInsets();
   // The choice is held locally until "Set date": tapping around the calendar
@@ -55,7 +55,9 @@ export function DatePickerSheet({
     if (visible) setDraft(value ?? "");
   }, [visible, value]);
 
-  const canSet = draft !== "";
+  // Tapping cannot produce a blocked day, but a value carried in from before
+  // the bound existed can — so the commit is guarded too, not just the grid.
+  const canSet = draft !== "" && !(minDate !== undefined && isDateKeyBefore(draft, minDate));
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -83,7 +85,7 @@ export function DatePickerSheet({
             value={draft || null}
             onSelect={setDraft}
             tokens={tokens}
-            markedDates={markedDates}
+            minDate={minDate}
           />
 
           <View style={sheetStyles.footer}>
@@ -169,7 +171,8 @@ export interface DateFieldProps {
   value: string;
   onChange: (dateKey: string) => void;
   tokens: ColorTokens;
-  markedDates?: readonly string[];
+  /** Earliest selectable day, `YYYY-MM-DD`. Omit for no lower bound. */
+  minDate?: string;
   placeholder?: string;
 }
 
@@ -178,7 +181,7 @@ export function DateField({
   value,
   onChange,
   tokens,
-  markedDates,
+  minDate,
   placeholder = "No date set",
 }: DateFieldProps) {
   const [open, setOpen] = useState(false);
@@ -238,7 +241,7 @@ export function DateField({
         onChange={onChange}
         onClose={() => setOpen(false)}
         tokens={tokens}
-        markedDates={markedDates}
+        minDate={minDate}
       />
     </>
   );
