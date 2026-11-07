@@ -376,6 +376,211 @@ export function timerSessionHours(
   return Math.floor((now.getTime() - startMs) / 3_600_000);
 }
 
+// ─── Calendar ────────────────────────────────────────────────────────────────
+//
+// Every date the app stores — a task's `endDate`, a group's, a reminder's
+// `fireDate` — is a plain `YYYY-MM-DD` *calendar* day with no time and no zone.
+// These helpers exist so nothing has to reach for `Date.prototype.toISOString()`
+// to produce one: that converts to UTC first, so east of Greenwich an evening
+// date comes back as the day before. Everything below works in local civil time
+// and never crosses a timezone.
+//
+// The month-grid builder lives here rather than in the phone's calendar
+// component so the desktop calendar lands on identical cells when it is built.
+
+/** Months, for a date label the user reads. */
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+] as const;
+
+const MONTH_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+/** Monday-first, matching the grid header the calendar renders. */
+const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+/**
+ * Build a `YYYY-MM-DD` key from civil date parts.
+ * @param month 1–12 (not the 0-based month `Date` uses).
+ */
+export function dateKey(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, "0")}-${pad2(month)}-${pad2(day)}`;
+}
+
+/** The local calendar day a `Date` falls on — never shifted into UTC. */
+export function toDateKey(date: Date): string {
+  return dateKey(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+/** Today, as a date key. `now` is injectable so callers can test. */
+export function todayKey(now: Date = new Date()): string {
+  return toDateKey(now);
+}
+
+/**
+ * Split a date key into civil parts, or null if it isn't a real calendar day.
+ *
+ * Rejects both malformed strings and dates that merely look plausible:
+ * `2026-02-31` parses as digits but is not a day, and `Date` would silently
+ * roll it forward to March 3rd rather than complain.
+ */
+export function parseDateKey(
+  key: string,
+): { year: number; month: number; day: number } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return null;
+  if (day > daysInMonth(year, month)) return null;
+
+  return { year, month, day };
+}
+
+/** True if `value` is a real `YYYY-MM-DD` calendar day. */
+export function isValidDateKey(value: string): boolean {
+  return parseDateKey(value) !== null;
+}
+
+/**
+ * True if `key` falls strictly before `other`.
+ *
+ * A plain string compare is already chronological here: the format is
+ * fixed-width and zero-padded, most-significant part first. No `Date` objects
+ * and so no timezone to get wrong — which is the whole reason dates are stored
+ * in this shape.
+ */
+export function isDateKeyBefore(key: string, other: string): boolean {
+  return key < other;
+}
+
+/** Number of days in a month. @param month 1–12. */
+export function daysInMonth(year: number, month: number): number {
+  // Day 0 of the next month is the last day of this one.
+  return new Date(year, month, 0).getDate();
+}
+
+/**
+ * Move a year/month pair by `delta` months, carrying the year.
+ * @param month 1–12.
+ */
+export function shiftMonth(
+  year: number,
+  month: number,
+  delta: number,
+): { year: number; month: number } {
+  // Work in absolute months so a delta of any size (and either sign) carries
+  // correctly; `% 12` alone goes negative when stepping back from January.
+  const absolute = year * 12 + (month - 1) + delta;
+  return { year: Math.floor(absolute / 12), month: (absolute % 12) + 1 };
+}
+
+/** "November 2026" — the calendar's month heading. @param month 1–12. */
+export function formatMonthLabel(year: number, month: number): string {
+  return `${MONTH_NAMES[month - 1]} ${year}`;
+}
+
+/**
+ * "Sat, 7 Nov 2026" — how a chosen date reads back in a form field.
+ *
+ * Returns the input untouched if it isn't a valid key, so a hand-typed value
+ * left over from before the picker existed still shows as whatever it says
+ * rather than as "Invalid Date".
+ */
+export function formatDateKeyLong(key: string): string {
+  const parts = parseDateKey(key);
+  if (!parts) return key;
+  const weekday = WEEKDAY_SHORT[weekdayIndex(parts.year, parts.month, parts.day)];
+  return `${weekday}, ${parts.day} ${MONTH_SHORT[parts.month - 1]} ${parts.year}`;
+}
+
+/** Monday-first weekday index (0 = Monday … 6 = Sunday). @param month 1–12. */
+export function weekdayIndex(year: number, month: number, day: number): number {
+  // getDay() is Sunday-first; rotate so the week starts on Monday.
+  return (new Date(year, month - 1, day).getDay() + 6) % 7;
+}
+
+/** One day cell in a month grid. */
+export interface CalendarDay {
+  /** `YYYY-MM-DD` — always a real date, including for the greyed lead-in days. */
+  key: string;
+  /** Day of the month, 1–31. */
+  day: number;
+  /** False for the neighbouring months' days that pad the grid at either end. */
+  inMonth: boolean;
+}
+
+/** A row of the grid: always seven real days. */
+export type CalendarWeek = CalendarDay[];
+
+/**
+ * Rows in a month grid.
+ *
+ * Always six. A month needs at most six (31 days first falling on a Sunday)
+ * and the grid is built to that size whatever the month, so the calendar is a
+ * fixed block: the controls around it cannot shift between a short February
+ * and a long November.
+ */
+export const CALENDAR_WEEKS = 6;
+
+/**
+ * The weeks of a month, Monday-first, ready to render.
+ *
+ * Every cell is a real, selectable date. The grid is padded at *both* ends
+ * from the neighbouring months — the previous month's tail so the 1st lands
+ * under its true weekday, the next month's head so the block is always a
+ * complete 6 × 7. Padding days carry `inMonth: false` and are meant to render
+ * dimmed; they are still genuine dates, so a picker can let you tap into the
+ * next month without paging to it first.
+ *
+ * @param month 1–12.
+ */
+export function buildMonthGrid(year: number, month: number): CalendarWeek[] {
+  const lead = weekdayIndex(year, month, 1);
+  const previous = shiftMonth(year, month, -1);
+  const previousLength = daysInMonth(previous.year, previous.month);
+  const next = shiftMonth(year, month, 1);
+
+  const cells: CalendarDay[] = [];
+  for (let i = lead; i > 0; i--) {
+    const day = previousLength - i + 1;
+    cells.push({ key: dateKey(previous.year, previous.month, day), day, inMonth: false });
+  }
+  for (let day = 1; day <= daysInMonth(year, month); day++) {
+    cells.push({ key: dateKey(year, month, day), day, inMonth: true });
+  }
+  for (let day = 1; cells.length < CALENDAR_WEEKS * 7; day++) {
+    cells.push({ key: dateKey(next.year, next.month, day), day, inMonth: false });
+  }
+
+  const weeks: CalendarWeek[] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
+/**
+ * Which month a calendar should open on: the month of `selected` when it holds
+ * a usable date, otherwise the month of `now`. A field that already has a date
+ * should show it, not make the user navigate back to find it.
+ */
+export function initialCalendarMonth(
+  selected: string | null | undefined,
+  now: Date = new Date(),
+): { year: number; month: number } {
+  const parts = selected ? parseDateKey(selected) : null;
+  if (parts) return { year: parts.year, month: parts.month };
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+}
+
 // ─── Task comments ───────────────────────────────────────────────────────────
 //
 // A task's comment log is read straight from the backend when the task opens

@@ -29,10 +29,12 @@ import {
   buildGroupTree,
   flattenGroupTree,
   groupSubtreeIds,
+  todayKey,
   wouldCreateGroupCycle,
 } from "@zakhira/core";
 import type { Group, GroupNode, Task, TaskType } from "@zakhira/core";
 import { TaskDetailModal } from "../../src/components/TaskDetailModal";
+import { DateField } from "../../src/components/DateField";
 
 /** Indent per nesting level, in px. */
 const INDENT = 16;
@@ -265,11 +267,13 @@ function CreateGroupModal({ visible, tokens, groups, initialParentId, onClose }:
               value={description} onChangeText={setDescription} placeholder="Optional"
               placeholderTextColor={tokens.textTertiary} multiline
             />
-            <Text style={[cm.label, { color: tokens.textSecondary }]}>Due Date</Text>
-            <TextInput
-              style={[cm.input, { backgroundColor: tokens.bgCard, borderColor: tokens.border, color: tokens.textPrimary }]}
-              value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD"
-              placeholderTextColor={tokens.textTertiary} keyboardType="numbers-and-punctuation"
+            <DateField
+              label="Due Date"
+              value={endDate}
+              onChange={setEndDate}
+              tokens={tokens}
+              // A deadline in the past is never what someone means to set.
+              minDate={todayKey()}
             />
           </ScrollView>
         </View>
@@ -410,11 +414,13 @@ function CreateTaskModal({ visible, groupId, tokens, onClose }: {
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={[cm.label, { color: tokens.textSecondary }]}>Due Date</Text>
-            <TextInput
-              style={[cm.input, { backgroundColor: tokens.bgCard, borderColor: tokens.border, color: tokens.textPrimary }]}
-              value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD"
-              placeholderTextColor={tokens.textTertiary} keyboardType="numbers-and-punctuation"
+            <DateField
+              label="Due Date"
+              value={endDate}
+              onChange={setEndDate}
+              tokens={tokens}
+              // A deadline in the past is never what someone means to set.
+              minDate={todayKey()}
             />
             <Text style={[cm.label, { color: tokens.textSecondary }]}>Notes</Text>
             <TextInput
