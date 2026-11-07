@@ -29,10 +29,12 @@ import {
   buildGroupTree,
   flattenGroupTree,
   groupSubtreeIds,
+  isTaskOpen,
   wouldCreateGroupCycle,
 } from "@zakhira/core";
 import type { Group, GroupNode, Task, TaskType } from "@zakhira/core";
 import { TaskDetailModal } from "../../src/components/TaskDetailModal";
+import { DateField } from "../../src/components/DateField";
 
 /** Indent per nesting level, in px. */
 const INDENT = 16;
@@ -196,11 +198,13 @@ function ParentPicker({ value, choices, tokens, onChange }: {
 
 // ── Create group modal ────────────────────────────────────────────────────────
 
-function CreateGroupModal({ visible, tokens, groups, initialParentId, onClose }: {
+function CreateGroupModal({ visible, tokens, groups, initialParentId, markedDates, onClose }: {
   visible: boolean;
   tokens: any;
   groups: Group[];
   initialParentId: string | null;
+  /** Days already carrying a deadline — dotted in the calendar. */
+  markedDates: string[];
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
@@ -265,11 +269,12 @@ function CreateGroupModal({ visible, tokens, groups, initialParentId, onClose }:
               value={description} onChangeText={setDescription} placeholder="Optional"
               placeholderTextColor={tokens.textTertiary} multiline
             />
-            <Text style={[cm.label, { color: tokens.textSecondary }]}>Due Date</Text>
-            <TextInput
-              style={[cm.input, { backgroundColor: tokens.bgCard, borderColor: tokens.border, color: tokens.textPrimary }]}
-              value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD"
-              placeholderTextColor={tokens.textTertiary} keyboardType="numbers-and-punctuation"
+            <DateField
+              label="Due Date"
+              value={endDate}
+              onChange={setEndDate}
+              tokens={tokens}
+              markedDates={markedDates}
             />
           </ScrollView>
         </View>
@@ -337,8 +342,13 @@ const TASK_TYPES: { key: TaskType; label: string; icon: string }[] = [
   { key: "exploration", label: "Exploration", icon: "⚗" },
 ];
 
-function CreateTaskModal({ visible, groupId, tokens, onClose }: {
-  visible: boolean; groupId: string; tokens: any; onClose: () => void;
+function CreateTaskModal({ visible, groupId, tokens, markedDates, onClose }: {
+  visible: boolean;
+  groupId: string;
+  tokens: any;
+  /** Days already carrying a deadline — dotted in the calendar. */
+  markedDates: string[];
+  onClose: () => void;
 }) {
   const [title, setTitle] = useState("");
   const [type, setType] = useState<TaskType>("main");
@@ -410,11 +420,12 @@ function CreateTaskModal({ visible, groupId, tokens, onClose }: {
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={[cm.label, { color: tokens.textSecondary }]}>Due Date</Text>
-            <TextInput
-              style={[cm.input, { backgroundColor: tokens.bgCard, borderColor: tokens.border, color: tokens.textPrimary }]}
-              value={endDate} onChangeText={setEndDate} placeholder="YYYY-MM-DD"
-              placeholderTextColor={tokens.textTertiary} keyboardType="numbers-and-punctuation"
+            <DateField
+              label="Due Date"
+              value={endDate}
+              onChange={setEndDate}
+              tokens={tokens}
+              markedDates={markedDates}
             />
             <Text style={[cm.label, { color: tokens.textSecondary }]}>Notes</Text>
             <TextInput
@@ -537,6 +548,22 @@ export default function GroupsScreen() {
   const { active: activeTasks, done: doneTasks } = useMemo(
     () => splitTasksForDisplay(groupTasks),
     [groupTasks]
+  );
+
+  /**
+   * Days the calendar dots: every deadline still outstanding, across all
+   * groups rather than just this one. A due date competes with the whole
+   * workload, so "I already have three things due that Thursday" is the useful
+   * thing to see while choosing — finished work is not.
+   */
+  const markedDates = useMemo(
+    () => [
+      ...new Set([
+        ...store.tasks.filter((t) => isTaskOpen(t.state) && t.endDate).map((t) => t.endDate!),
+        ...store.groups.filter((g) => g.endDate).map((g) => g.endDate!),
+      ]),
+    ],
+    [store.tasks, store.groups]
   );
 
   function toggle(id: string) {
@@ -748,6 +775,7 @@ export default function GroupsScreen() {
           tokens={tokens}
           groups={store.groups}
           initialParentId={createParentId}
+          markedDates={markedDates}
           onClose={() => setCreateParentId(undefined)}
         />
       )}
@@ -765,6 +793,7 @@ export default function GroupsScreen() {
         visible={showCreateTask}
         groupId={selectedGroup?.id ?? ""}
         tokens={tokens}
+        markedDates={markedDates}
         onClose={() => setShowCreateTask(false)}
       />
     </SafeAreaView>
