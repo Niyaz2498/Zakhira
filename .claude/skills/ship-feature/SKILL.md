@@ -1,11 +1,16 @@
 ---
 name: ship-feature
-description: End-to-end loop for building a Zakhira feature — investigate, build shared logic in packages/core, verify on the Android emulator against a local backend, open a PR, then cut a release. Use when adding or changing app behaviour in apps/mobile, apps/desktop or packages/core, and when testing anything on the emulator or cutting a vX.Y.Z release.
+description: End-to-end loop for building a Zakhira feature — investigate, build shared logic in packages/core, verify on the Android emulator against a local backend, hand the running app over for sign-off, update the handbook, open a PR, then cut a release. Use when adding or changing app behaviour in apps/mobile, apps/desktop or packages/core, when testing anything on the emulator, when updating docs/handbook, or when cutting a vX.Y.Z release.
 ---
 
 # Shipping a Zakhira feature
 
-Five phases. Don't skip phase 1, and never test against production.
+Seven phases. Don't skip phase 1, and never test against production.
+
+The order of 3 → 4 → 5 is deliberate and easy to get wrong: **the user drives
+the app before anything is torn down, and the handbook screenshots are taken
+while that same stack is still up.** Tearing down early means booting the whole
+thing a second time for pictures.
 
 ---
 
@@ -157,20 +162,70 @@ reading the code did not — including a helper that divided by the alert interv
 instead of an hour, and an Android `channelId` placed on `content` where it is
 *silently ignored* rather than erroring.
 
-### Clean up — always
+### Then stop — do not tear down
+
+Screenshots confirm a thing renders; they don't confirm it feels right. Leave
+the emulator, Metro and wrangler **running**, with the seed data in place, and
+hand the app over:
+
+> The app is running and it's yours to test. Sign in with `<user>` / `<pass>`.
+> To reach it: `<the path through the UI>`.
+
+Wait for the user to say it works. Expect a round or two of fixes here — a
+`force-stop` plus relaunch picks up edits when fast refresh doesn't. Only once
+they sign off do you move on.
+
+---
+
+## 4. Capture the handbook screenshots
+
+**While the stack from phase 3 is still up.** This is the whole reason teardown
+comes later.
+
+`docs/handbook/` is the user-facing book — what the app does, in the second
+person, for someone who will never read the code. It is *not* `ARCHITECTURE.md`
+(how it is built) or `DECISIONS.md` (why). Keep mechanism out of it; if a
+paragraph explains the sync protocol or a cycle check, it is in the wrong file.
+
+Read `docs/handbook/README.md` before writing — it holds the conventions and
+the chapter order.
+
+**Shoot only where the visual is the point** — a grid, a layout, the themes.
+A screenshot of a text form teaches less than a sentence and goes stale faster.
+Screenshots are the highest-maintenance documentation there is; a single token
+tweak silently invalidates every one of them.
+
+```sh
+adb exec-out screencap -p > /tmp/shot.png
+# crop to the region that matters — full-screen chrome is noise
+sips -c <h> <w> --cropOffset <top> <left> /tmp/shot.png --out docs/handbook/images/<name>.png
+```
+
+- **Dark theme by default.** Add a light shot only where the difference is the
+  subject.
+- **Same AVD, consistent crops.** Ragged widths page badly later.
+- Name by what it shows, not by order: `calendar-sheet-dark.png`.
+- Caption every image — the caption carries the meaning, the picture confirms it.
+
+---
+
+## 5. Clean up — always
 
 ```sh
 curl -s -X DELETE "http://localhost:8788/admin/users/$ID" -H "Authorization: Bearer $ADMIN"
 cp /tmp/env.dev.backup apps/mobile/.env.development.local
-adb emu kill; pkill -f "qemu-system.*Pixel_10_Pro"
+adb emu kill; pkill -f "qemu-system.*Pixel_10_Pro"   # -9 if it survives
 # kill Metro (8081) and wrangler (8788)
 ```
+
+`adb emu kill` has been seen to return OK while the process keeps running —
+re-check with `pgrep -f "qemu-system.*Pixel"` rather than trusting it.
 
 Then `git status` and confirm only intended files changed.
 
 ---
 
-## 4. Open a PR
+## 6. Open a PR
 
 The user merges; you don't.
 
@@ -182,6 +237,10 @@ git push -u origin <branch>
 gh pr create --base main --title "..." --body "..."
 ```
 
+The handbook changes from phase 4 go in **this** PR, not a follow-up — the
+prose, the screenshots and the code that produced them land together or the
+book starts drifting on day one.
+
 Commit messages end with the attribution line the session specifies. In the PR
 body, state **design decisions and their reasons**, **judgement calls the user
 should check**, and **what was actually verified versus assumed**. If testing
@@ -191,7 +250,7 @@ Confirm with `gh pr view <n> --json state,mergeable`.
 
 ---
 
-## 5. Cut a release
+## 7. Cut a release
 
 Full detail in [docs/RELEASING.md](../../../docs/RELEASING.md). The loop:
 
