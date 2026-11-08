@@ -8,6 +8,7 @@ build/
 out/
 *.tsbuildinfo
 dist-release/
+dist-handbook/
 *.apk
 *.aab
 

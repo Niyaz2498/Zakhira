@@ -220,6 +220,63 @@ jobs:
           args: --target aarch64-apple-darwin
           includeUpdaterJson: true
 
+  # ── Handbook: docs/handbook bound into one PDF ─────────────────────────────
+  #
+  # Deliberately NOT in `publish`'s needs. The apps are the product and the
+  # handbook is an extra, so a font or Chrome hiccup here must not hold back a
+  # release — the job goes red and the release still ships, and the PDF can be
+  # re-run or attached by hand afterwards. (v1.3.0 was lost to exactly the
+  # opposite arrangement: the macOS runner label went stale, `publish` needed
+  # it, and nothing shipped at all.)
+  #
+  # It runs alongside the two build jobs rather than after them. If it finishes
+  # after `publish` has flipped the release out of draft, the upload simply
+  # lands on the published release, which is fine.
+  handbook:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # No font install. The handbook avoids pictographic glyphs by house
+      # style, so the only non-ASCII marks it prints are an em dash, a
+      # multiplication sign, an arrow and a breadcrumb chevron — all present
+      # in any font Chrome resolves to on a bare runner. Installing Noto to
+      # cover glyphs we have decided not to use would add an apt-get that can
+      # fail on a bad mirror, and a red job here would cry wolf. The build
+      # warns if a stray glyph ever shows up in the prose.
+
+      # The script finds Chrome itself, but failing here names the problem far
+      # more clearly than a stack trace three steps later would.
+      - name: Check Chrome is available
+        run: google-chrome --version
+
+      - name: Build the handbook PDF
+        run: |
+          node scripts/build-handbook-pdf.mjs \
+            --version "${{ needs.create-release.outputs.version }}" \
+            --out "dist-handbook/zakhira-handbook-v${{ needs.create-release.outputs.version }}.pdf"
+
+      - name: Upload handbook to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist-handbook/zakhira-handbook-v${{ needs.create-release.outputs.version }}.pdf" \
+            --clobber
+
   # ── Publish once both platforms are in ─────────────────────────────────────
   publish:
     needs: [create-release, android, macos]
