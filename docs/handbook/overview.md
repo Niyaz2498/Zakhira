@@ -46,9 +46,9 @@ something exists on only one of them, the chapter that covers it says so.
 ## Getting your data in step
 
 Zakhira syncs on its own. The phone syncs when you open it and whenever you
-bring it back to the foreground; pull down on the Dashboard, or tap **↻** in
-its header, to sync immediately. The desktop syncs on launch and then every
-minute.
+bring it back to the foreground; pull down on the Dashboard, or tap the
+**refresh** control in its header, to sync immediately. The desktop syncs on
+launch and then every minute.
 
 Changes are written to your account as you make them — a state change, a
 timer, a comment — rather than being held until you save, so nothing is lost

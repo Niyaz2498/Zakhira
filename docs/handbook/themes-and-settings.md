@@ -5,7 +5,7 @@ has are about the app rather than about your work.
 
 ## Dark and light
 
-**Settings → Appearance → Theme** switches between 🌙 Dark and ☀ Light. The
+**Settings → Appearance → Theme** switches between Dark and Light. The
 change is immediate and is remembered on that device. On the desktop the same
 switch also sits at the bottom of the sidebar, so you need not open Settings
 for it.
@@ -34,9 +34,9 @@ and there is no "match system" option to return to.
 
 Neither is editable here. The server address is fixed when you sign in.
 
-To sync immediately, use the Dashboard rather than Settings — **↻ Refresh**
-in its header on the desktop, and on the phone either the **↻** or a pull
-down on the list. Otherwise both apps sync on their own; see
+To sync immediately, use the Dashboard rather than Settings — **Refresh** in
+its header on the desktop, and on the phone either the refresh control or a
+pull down on the list. Otherwise both apps sync on their own; see
 [Overview](overview.md).
 
 If Last synced is stuck in the past, that is the thing to check when a change

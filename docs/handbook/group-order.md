@@ -12,7 +12,7 @@ have two top-level groups — with one there is no order to set.
 ![The reorder screen. General Tasks is pinned above the groups you can
 move.](images/reorder-screen-dark.png)
 
-Drag a group by the **☰** handle on its right. The other rows step aside to
+Drag a group by the **grip handle** on its right. The other rows step aside to
 show where it will land, and release drops it there.
 
 ![Dragging a group upward. The lifted row is outlined, and the group it is

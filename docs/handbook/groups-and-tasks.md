@@ -6,9 +6,9 @@ tasks and further groups.
 
 ## General Tasks
 
-Every account starts with one group called **General Tasks**, marked 🔒. It is
-the inbox for anything that does not deserve a project of its own — a phone
-call to make, a form to fill in.
+Every account starts with one group called **General Tasks**, marked with a
+padlock. It is the inbox for anything that does not deserve a project of its
+own — a phone call to make, a form to fill in.
 
 It is deliberately not a category like the others:
 
@@ -51,8 +51,8 @@ empty group is not an achievement.
 
 ## Nesting, and moving a group
 
-Sub-groups are shown indented under their parent, with a **▶ / ▼** caret to
-collapse and expand. Collapsing is a view on your own screen — it changes
+Sub-groups are shown indented under their parent, with a caret beside the name
+to collapse and expand. Collapsing is a view on your own screen — it changes
 nothing and is not remembered between visits.
 
 To re-nest an existing group, open it and choose **Move**, then pick its new
@@ -84,7 +84,7 @@ General Tasks cannot be deleted.
 Open a group and tap **+**. A task needs a **title** and a **type**:
 
 - **Title** — what the work is.
-- **Type** — Main Quest ⚔, Side Quest 📍 or Exploration ⚗. Defaults to Main
+- **Type** — Main Quest, Side Quest or Exploration. Defaults to Main
   Quest. See [Task states and types](task-states-and-types.md).
 - **Due date** — optional, picked from a calendar.
 - **Notes** — optional. This is the task's *brief*: what it is and what done
