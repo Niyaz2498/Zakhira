@@ -79,6 +79,59 @@ function readChapterList() {
   return { chapters, missing };
 }
 
+// ── House style ──────────────────────────────────────────────────────────────
+
+/**
+ * Marks the handbook is allowed to print beyond ASCII.
+ *
+ * Everything here is ordinary typography that every text font carries, which
+ * is what lets the build skip installing symbol fonts on the runner.
+ */
+const ALLOWED_NON_ASCII = new Set([
+  "—", // — em dash
+  "–", // – en dash
+  "‘", "’", // ' ' curly single quotes
+  "“", "”", // " " curly double quotes
+  "…", // … ellipsis
+  "→", // → in navigation paths: Settings → Appearance
+  "›", // › in group paths: Offl › Firmware
+  "×", // × the clear control
+  " ", // non-breaking space
+]);
+
+/**
+ * Warn about pictographic glyphs in the prose.
+ *
+ * House style is no emoji in the docs, so anything exotic is a slip rather
+ * than a decision. This warns and keeps going rather than failing: a stray
+ * glyph is a wording nit, and refusing to produce the book over one would be
+ * out of all proportion — especially in a job that is deliberately allowed to
+ * fail without holding up a release.
+ *
+ * It matters because nothing else would catch it. Such a glyph renders fine
+ * on the Mac where it was written and prints as an empty box from the runner,
+ * and no step anywhere goes red.
+ */
+function assertNoPictographs(chapters) {
+  const found = [];
+  for (const c of chapters) {
+    const lines = readFileSync(join(HANDBOOK, c.file), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      for (const ch of line) {
+        if (ch.codePointAt(0) > 127 && !ALLOWED_NON_ASCII.has(ch)) {
+          found.push(`${c.file}:${i + 1}  ${ch}  (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")})`);
+        }
+      }
+    });
+  }
+  if (found.length === 0) return;
+  console.warn("\n  Warning: pictographic glyphs in the handbook prose.");
+  console.warn("  House style is to name the icon in words instead, and the PDF");
+  console.warn("  build installs no symbol fonts, so these may print as boxes:");
+  for (const f of new Set(found)) console.warn(`    ${f}`);
+  console.warn("");
+}
+
 // ── Markdown → HTML ──────────────────────────────────────────────────────────
 
 marked.setOptions({ gfm: true });
@@ -139,21 +192,17 @@ const CSS = `
   * { box-sizing: border-box; }
 
   /*
-   * The symbol and emoji families are a safety net, not a fix for anything
-   * currently broken: the handbook avoids pictographic glyphs by preference,
-   * and today only uses → and ›, which every font has.
-   *
-   * They stay because the build runs on two very different machines — macOS,
-   * where Apple's fonts cover almost any mark, and a bare Linux runner, where
-   * they do not exist. Without this, a glyph that creeps into the prose would
-   * look right to whoever proofread it locally and print as a box for
-   * everyone else, with nothing failing to say so.
+   * Liberation and DejaVu are named only so a Linux runner lands on a known
+   * face instead of whatever fontconfig picks first; both are ordinary text
+   * fonts, and neither needs installing. There is deliberately no symbol or
+   * emoji family here — the handbook avoids pictographic glyphs by house
+   * style, and carrying fallbacks for marks we have decided not to use would
+   * just let one slip through quietly. assertNoPictographs complains instead.
    */
   body {
     margin: 0; color: var(--ink); background: #fff;
-    font: 10.5pt/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
-          "Apple Symbols", "Noto Sans Symbols 2", "Segoe UI Symbol", "DejaVu Sans",
-          "Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji", sans-serif;
+    font: 10.5pt/1.55 -apple-system, "Segoe UI", Roboto, "Liberation Sans",
+          "DejaVu Sans", Helvetica, Arial, sans-serif;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 
@@ -281,6 +330,8 @@ for (const c of list.chapters) {
   const path = join(HANDBOOK, c.file);
   if (!existsSync(path)) throw new Error(`Chapter ${c.number} points at a missing file: ${c.file}`);
 }
+
+assertNoPictographs(list.chapters);
 
 const rendered = list.chapters.map((c) => renderChapter(c, byFile));
 const html = buildHtml(list, rendered);

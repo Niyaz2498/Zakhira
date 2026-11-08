@@ -250,14 +250,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # A safety net rather than a current need: the handbook deliberately
-      # avoids pictographic glyphs, so today it only uses arrows every font
-      # has. Keeping the fonts installed means that if one ever does land in
-      # the prose, the runner prints it rather than a silent box.
-      - name: Install fonts for symbols and emoji
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq fonts-noto-core fonts-noto-color-emoji
+      # No font install. The handbook avoids pictographic glyphs by house
+      # style, so the only non-ASCII marks it prints are an em dash, a
+      # multiplication sign, an arrow and a breadcrumb chevron — all present
+      # in any font Chrome resolves to on a bare runner. Installing Noto to
+      # cover glyphs we have decided not to use would add an apt-get that can
+      # fail on a bad mirror, and a red job here would cry wolf. The build
+      # warns if a stray glyph ever shows up in the prose.
 
       # The script finds Chrome itself, but failing here names the problem far
       # more clearly than a stack trace three steps later would.
