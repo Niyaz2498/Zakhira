@@ -9,11 +9,14 @@ You pick a type when you create a task. It can be changed later on the
 desktop, along with the task's other details; on the phone it is fixed once
 created.
 
-| | Type | What it means |
-|---|---|---|
-| ⚔ | **Main Quest** | Real progress. The group is not finished until this is. |
-| 📍 | **Side Quest** | Worth doing, but the group can finish without it. |
-| ⚗ | **Exploration** | Looking into something. May lead nowhere, and that is fine. |
+| Type | What it means |
+|---|---|
+| **Main Quest** | Real progress. The group is not finished until this is. |
+| **Side Quest** | Worth doing, but the group can finish without it. |
+| **Exploration** | Looking into something. May lead nowhere, and that is fine. |
+
+Each has its own small icon in the app — crossed swords, a pin and a flask
+respectively — shown on the type buttons and beside a task's type.
 
 **Only Main Quests count toward a group's progress.** A group showing `3/7
 main quests` is counting main quests alone, however many side quests and
