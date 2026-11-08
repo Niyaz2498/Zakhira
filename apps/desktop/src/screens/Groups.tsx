@@ -13,6 +13,7 @@ import {
   computeGroupStats,
   splitTasksForDisplay,
   buildGroupTree,
+  compareGroupsForDisplay,
   wouldCreateGroupCycle,
   groupSubtreeIds,
 } from "@zakhira/core";
@@ -416,7 +417,7 @@ function GroupTasksPanel({ group, groups, tasks, tokens, onClose, onOpenGroup, o
   const { active, done } = splitTasksForDisplay(groupTasks);
   const children = groups
     .filter((g) => g.parentId === group.id)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort(compareGroupsForDisplay);
   const stats = computeGroupStats(group.id, groups, tasks);
   const moveTargets = useMemo(() => parentOptions(group, groups), [group, groups]);
 

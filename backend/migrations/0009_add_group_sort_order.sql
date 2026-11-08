@@ -1,0 +1,22 @@
+-- Migration 0009: hand-set group ordering.
+--
+-- Groups rendered alphabetically, with no way to say which ones matter most.
+-- `importance` was the obvious candidate to sort on and is the wrong tool: it
+-- is a 1-5 rating shown as stars, so it cannot express "these two both matter,
+-- but this one goes first", and overloading it would make reordering a list
+-- silently rewrite its stars.
+--
+-- NULL is the whole design, not an afterthought. Every existing row gets it,
+-- and `compareGroupsForDisplay` sorts NULLs last and alphabetically among
+-- themselves — so this migration changes nobody's screen until they actually
+-- drag something, and a group created after a reorder lands at the bottom
+-- instead of in the middle of an arrangement someone chose.
+--
+-- Positions are only ever compared between siblings; the column carries no
+-- meaning across different parents, and the reorder endpoint enforces that by
+-- rejecting a batch spanning more than one parent.
+--
+-- No index. Ordering happens client-side in `buildGroupTree` over a set already
+-- loaded in full, and a user has tens of groups, not thousands.
+
+ALTER TABLE groups ADD COLUMN sort_order INTEGER DEFAULT NULL;

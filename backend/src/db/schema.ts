@@ -28,6 +28,9 @@ export const groups = sqliteTable("groups", {
   endDate: text("end_date"),
   importance: integer("importance"),
   isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  // Hand-set position among siblings. NULL = never reordered, which sorts
+  // last; see migration 0009 and `compareGroupsForDisplay`.
+  sortOrder: integer("sort_order"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

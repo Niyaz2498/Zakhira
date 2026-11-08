@@ -21,6 +21,7 @@ function toGroup(row: typeof schema.groups.$inferSelect): Group {
     endDate: row.endDate,
     importance: row.importance,
     isDefault: Boolean(row.isDefault),
+    sortOrder: row.sortOrder,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -126,6 +127,63 @@ app.post("/", async (c) => {
   });
   const row = await db.query.groups.findFirst({ where: eq(schema.groups.id, id) });
   return c.json({ ok: true, data: toGroup(row!) }, 201);
+});
+
+// PATCH /groups/reorder
+//
+// Must be declared before PATCH /:id — Hono matches in registration order, so
+// the other way round "reorder" is read as a group id and this never runs.
+app.patch("/reorder", async (c) => {
+  const auth = c.get("auth");
+  const db = drizzle(c.env.DB, { schema }) as AppDB;
+
+  const body = await c.req.json<{ orderedIds?: unknown }>();
+  const orderedIds = body.orderedIds;
+  if (!Array.isArray(orderedIds) || orderedIds.some((id) => typeof id !== "string")) {
+    return c.json({ ok: false, error: "orderedIds must be an array of group ids" }, 400);
+  }
+  if (new Set(orderedIds).size !== orderedIds.length) {
+    return c.json({ ok: false, error: "orderedIds contains duplicates" }, 400);
+  }
+  // Nothing to number, and `inArray` with an empty list is not valid SQL.
+  if (orderedIds.length === 0) return c.json({ ok: true, data: [] });
+
+  const ownGroups = await loadOwnGroups(db, auth);
+  const byId = new Map(ownGroups.map((g) => [g.id, g]));
+
+  const subjects = (orderedIds as string[]).map((id) => byId.get(id));
+  // Same reasoning as validateParent: "not yours" and "doesn't exist" give the
+  // same answer, so a caller can't probe for groups belonging to someone else.
+  if (subjects.some((g) => g === undefined)) {
+    return c.json({ ok: false, error: "Group not found" }, 404);
+  }
+  const groups = subjects as Group[];
+
+  if (groups.some((g) => g.isDefault)) {
+    return c.json({ ok: false, error: "General Tasks is always first" }, 400);
+  }
+  // A position is only meaningful against siblings. Numbering two different
+  // parents' children from the same 0 would interleave them on a later render.
+  const parents = new Set(groups.map((g) => g.parentId));
+  if (parents.size > 1) {
+    return c.json({ ok: false, error: "All groups must share the same parent" }, 400);
+  }
+
+  const now = new Date().toISOString();
+  for (const [index, group] of groups.entries()) {
+    await db
+      .update(schema.groups)
+      .set({ sortOrder: index, updatedAt: now })
+      .where(eq(schema.groups.id, group.id));
+  }
+
+  // Return the rewritten rows rather than { ok: true }: the clients hold the
+  // group list in memory and would otherwise have to re-sync to see the order
+  // they just set.
+  const updated = await db.query.groups.findMany({
+    where: inArray(schema.groups.id, groups.map((g) => g.id)),
+  });
+  return c.json({ ok: true, data: updated.map(toGroup) });
 });
 
 // PATCH /groups/:id

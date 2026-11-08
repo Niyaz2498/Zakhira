@@ -91,11 +91,38 @@ export interface GroupNode {
 }
 
 /**
+ * How two sibling groups order against each other, everywhere groups are
+ * listed. Three tiers, applied in turn:
+ *
+ * 1. **General Tasks first.** The default group is the inbox and stays at the
+ *    top; it is not something the user can drag out of place.
+ * 2. **Hand-set position**, ascending. A group with a `sortOrder` always
+ *    precedes one without, so arranging *part* of a list does not shuffle the
+ *    rest into it — the untouched groups collect below, in order.
+ * 3. **Name**, for the groups sharing tier 2 — which is every group until the
+ *    first reorder, so an app nobody has reordered looks exactly as it did
+ *    before this existed.
+ *
+ * Exported because the sub-group lists inside the group detail screens sort
+ * their own slice rather than going through `buildGroupTree`, and they must
+ * not disagree with the tree about what order siblings are in.
+ */
+export function compareGroupsForDisplay(a: Group, b: Group): number {
+  if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+  if (a.sortOrder !== b.sortOrder) {
+    if (a.sortOrder === null) return 1;
+    if (b.sortOrder === null) return -1;
+    return a.sortOrder - b.sortOrder;
+  }
+  return a.name.localeCompare(b.name);
+}
+
+/**
  * Build the group forest, ready to render.
  *
- * Ordering at every level: the default group ("General Tasks") first, then the
- * rest by name — so the tree reads the same on both platforms and a rename is
- * the only thing that moves a group.
+ * Ordering at every level is `compareGroupsForDisplay` — the default group,
+ * then whatever arrangement was set, then the rest by name — so the tree reads
+ * the same on both platforms.
  *
  * Groups orphaned by a missing parent are surfaced as roots instead of being
  * dropped; a group whose parent pointer loops is unreachable from any root, so
@@ -104,10 +131,7 @@ export interface GroupNode {
 export function buildGroupTree(groups: Group[]): GroupNode[] {
   const byId = new Map(groups.map((g) => [g.id, g]));
 
-  const byLevel = (a: Group, b: Group) => {
-    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  };
+  const byLevel = compareGroupsForDisplay;
 
   const childrenOf = new Map<string | null, Group[]>();
   for (const g of groups) {
@@ -147,6 +171,44 @@ export function buildGroupTree(groups: Group[]): GroupNode[] {
  */
 export function flattenGroupTree(nodes: GroupNode[]): GroupNode[] {
   return nodes.flatMap((node) => [node, ...flattenGroupTree(node.children)]);
+}
+
+// ─── Reordering ──────────────────────────────────────────────────────────────
+
+/**
+ * The groups a reorder screen may rearrange: top-level, and not the default.
+ * Returned in current display order, so the list opens showing the arrangement
+ * the Groups page is showing.
+ *
+ * General Tasks is excluded rather than merely pinned in the UI — tier 1 of
+ * `compareGroupsForDisplay` holds it at the top whatever position it is given,
+ * so letting it into the list would offer a drag that does nothing.
+ */
+export function reorderableGroups(groups: Group[]): Group[] {
+  return groups
+    .filter((g) => g.parentId === null && !g.isDefault)
+    .sort(compareGroupsForDisplay);
+}
+
+/**
+ * `items` with the entry at `from` moved to index `to`, as a new array.
+ *
+ * This is the whole of the drag maths, kept out of the gesture code so it can
+ * be reasoned about on its own: a drag is "pick up index i, put it down at
+ * index j", and the gesture layer's only job is turning a finger position into
+ * those two numbers. Out-of-range indices return the list untouched rather
+ * than throwing — a drag released off the edge of the screen is a no-op, not
+ * an error.
+ */
+export function moveInList<T>(items: T[], from: number, to: number): T[] {
+  if (from === to) return items;
+  if (from < 0 || from >= items.length) return items;
+  if (to < 0 || to >= items.length) return items;
+
+  const next = [...items];
+  const moved = next.splice(from, 1);
+  next.splice(to, 0, ...moved);
+  return next;
 }
 
 // ─── Cycle detection (DFS) ───────────────────────────────────────────────────

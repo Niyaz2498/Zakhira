@@ -17,6 +17,14 @@ export interface Group {
   endDate: string | null;
   importance: number | null;
   isDefault: boolean;
+  /**
+   * Hand-set position among its siblings, ascending. `null` means "never
+   * reordered" and sorts after every positioned sibling, alphabetically — so a
+   * list nobody has touched reads exactly as it did before ordering existed,
+   * and a newly created group lands at the bottom rather than in the middle of
+   * an arrangement you chose. Set through `reorderGroups`, not `updateGroup`.
+   */
+  sortOrder: number | null;
   createdAt: string;
   updatedAt: string;
 }

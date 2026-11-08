@@ -27,6 +27,7 @@ import {
   computeGroupStats,
   splitTasksForDisplay,
   buildGroupTree,
+  compareGroupsForDisplay,
   flattenGroupTree,
   groupSubtreeIds,
   todayKey,
@@ -35,6 +36,7 @@ import {
 import type { Group, GroupNode, Task, TaskType } from "@zakhira/core";
 import { TaskDetailModal } from "../../src/components/TaskDetailModal";
 import { DateField } from "../../src/components/DateField";
+import { ReorderGroupsModal } from "../../src/components/ReorderGroupsModal";
 
 /** Indent per nesting level, in px. */
 const INDENT = 16;
@@ -508,6 +510,7 @@ export default function GroupsScreen() {
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [movingGroup, setMovingGroup] = useState<Group | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [reordering, setReordering] = useState(false);
 
   const tree = useMemo(() => buildGroupTree(store.groups), [store.groups]);
   const visibleRows = useMemo(() => {
@@ -535,7 +538,7 @@ export default function GroupsScreen() {
 
   const children = useMemo(
     () => selectedGroup
-      ? store.groups.filter((g) => g.parentId === selectedGroup.id).sort((a, b) => a.name.localeCompare(b.name))
+      ? store.groups.filter((g) => g.parentId === selectedGroup.id).sort(compareGroupsForDisplay)
       : [],
     [selectedGroup, store.groups]
   );
@@ -609,9 +612,22 @@ export default function GroupsScreen() {
       {/* Header */}
       <View style={[ls.header, { borderBottomColor: tokens.border }]}>
         <Text style={[ls.heading, { color: tokens.textPrimary }]}>Groups</Text>
-        <TouchableOpacity onPress={() => setCreateParentId(null)} style={{ padding: 8 }}>
-          <Text style={{ fontSize: 26, color: tokens.accent, lineHeight: 28 }}>+</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          {/* Hidden below two groups: there is no order to set with one. */}
+          {store.groups.filter((g) => g.parentId === null && !g.isDefault).length > 1 && (
+            <TouchableOpacity
+              onPress={() => setReordering(true)}
+              style={[ls.reorderBtn, { borderColor: tokens.accent }]}
+            >
+              <Text style={{ color: tokens.accent, fontSize: 13, fontWeight: "600" }}>
+                ☰  Reorder
+              </Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => setCreateParentId(null)} style={{ padding: 8 }}>
+            <Text style={{ fontSize: 26, color: tokens.accent, lineHeight: 28 }}>+</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
@@ -758,6 +774,17 @@ export default function GroupsScreen() {
         />
       )}
 
+      {/* Mounted only while open, so each open re-seeds from the live order */}
+      {reordering && (
+        <ReorderGroupsModal
+          visible
+          groups={store.groups}
+          tasks={store.tasks}
+          tokens={tokens}
+          onClose={() => setReordering(false)}
+        />
+      )}
+
       {/* Move group modal */}
       <MoveGroupModal
         group={movingGroup}
@@ -783,6 +810,7 @@ const ls = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1,
   },
   heading: { fontSize: 22, fontWeight: "700" },
+  reorderBtn: { paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
   taskRow: {
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: 12, borderRadius: 10, borderWidth: 1, marginBottom: 8,
