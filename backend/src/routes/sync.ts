@@ -63,6 +63,7 @@ app.get("/", async (c) => {
     endDate: r.endDate,
     importance: r.importance,
     isDefault: Boolean(r.isDefault),
+    sortOrder: r.sortOrder,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   }));

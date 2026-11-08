@@ -33,13 +33,14 @@ this list.
 
 1. *Overview* — not yet written
 2. *Groups and tasks* — not yet written
-3. *Task states and types* — not yet written
-4. *Prerequisites* — not yet written
-5. *Tracking time* — not yet written
-6. *Comments* — not yet written
-7. [Dates and the calendar](dates-and-calendar.md)
-8. *Reminders* — not yet written
-9. *Themes and settings* — not yet written
+3. [Ordering your groups](group-order.md)
+4. *Task states and types* — not yet written
+5. *Prerequisites* — not yet written
+6. *Tracking time* — not yet written
+7. *Comments* — not yet written
+8. [Dates and the calendar](dates-and-calendar.md)
+9. *Reminders* — not yet written
+10. *Themes and settings* — not yet written
 
 "Not yet written" is deliberate and honest: the handbook starts from today and
 fills in backwards, rather than pretending to be complete. A chapter is written

@@ -62,6 +62,22 @@ export class ZakhiraClient {
   }
 
   /**
+   * Set the display order of a set of sibling groups — `orderedIds` is the
+   * arrangement, front to back, and the server numbers them from there.
+   *
+   * One request rather than a PATCH per group: a reorder is a single intent,
+   * and N requests can half-apply, leaving the list in an order the user never
+   * asked for. Returns the groups it rewrote, ready to merge into the store.
+   *
+   * Every id must be a group you own, with no duplicates, all sharing one
+   * parent — positions are only ever compared between siblings. General Tasks
+   * is rejected: it is pinned to the top by the display rules regardless.
+   */
+  reorderGroups(orderedIds: string[]): Promise<ApiResponse<Group[]>> {
+    return this.request("PATCH", "/groups/reorder", { orderedIds });
+  }
+
+  /**
    * `cascade` deletes the group's whole subtree — its tasks, its sub-groups and
    * their tasks. `move` keeps everything: tasks go to General Tasks, sub-groups
    * are promoted to the deleted group's own parent.
