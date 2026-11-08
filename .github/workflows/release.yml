@@ -164,7 +164,16 @@ jobs:
   # ── macOS: Apple Silicon .dmg + updater artifacts ──────────────────────────
   macos:
     needs: create-release
-    runs-on: macos-14
+    # Apple Silicon, to match --target aarch64-apple-darwin below. Pinned to a
+    # numbered image rather than macos-latest so a runner migration can never
+    # silently move the build onto Intel.
+    #
+    # Was macos-14 until v1.3.0, when GitHub retired that configuration and the
+    # job stopped starting at all: it is cancelled before the first step with
+    # "The configuration 'macos-14-arm64-us-default' is not supported", which
+    # reads like an infrastructure blip rather than a label to change. The
+    # release then publishes nothing, because publish needs both platforms.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
