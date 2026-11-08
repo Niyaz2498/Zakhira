@@ -139,13 +139,15 @@ const CSS = `
   * { box-sizing: border-box; }
 
   /*
-   * The symbol and emoji families are insurance, not decoration. The handbook
-   * names the app's own glyphs in running text — ☰, ⚔, 📍, ⚗, 🔒, ▶, ↻ — and
-   * the build runs on both macOS (where Apple's fonts cover all of them) and a
-   * Linux runner (where they do not exist at all). Naming Noto and DejaVu here
-   * is what stops the Linux output quietly differing from what you proofread
-   * locally. Symbol fonts come before emoji so monochrome marks stay
-   * monochrome rather than turning into colour emoji.
+   * The symbol and emoji families are a safety net, not a fix for anything
+   * currently broken: the handbook avoids pictographic glyphs by preference,
+   * and today only uses → and ›, which every font has.
+   *
+   * They stay because the build runs on two very different machines — macOS,
+   * where Apple's fonts cover almost any mark, and a bare Linux runner, where
+   * they do not exist. Without this, a glyph that creeps into the prose would
+   * look right to whoever proofread it locally and print as a box for
+   * everyone else, with nothing failing to say so.
    */
   body {
     margin: 0; color: var(--ink); background: #fff;

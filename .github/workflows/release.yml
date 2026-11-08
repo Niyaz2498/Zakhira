@@ -250,9 +250,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The handbook prints the app's own glyphs in running text (☰ ⚔ 📍 ⚗ 🔒).
-      # Apple's fonts cover them on a Mac; a bare runner has nothing for them
-      # and would silently print boxes where the text means something.
+      # A safety net rather than a current need: the handbook deliberately
+      # avoids pictographic glyphs, so today it only uses arrows every font
+      # has. Keeping the fonts installed means that if one ever does land in
+      # the prose, the runner prints it rather than a silent box.
       - name: Install fonts for symbols and emoji
         run: |
           sudo apt-get update -qq
