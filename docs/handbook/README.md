@@ -31,20 +31,21 @@ The order lives here rather than in filename prefixes, so inserting a chapter
 never means renaming the ones after it. When the PDF build arrives, it reads
 this list.
 
-1. *Overview* — not yet written
-2. *Groups and tasks* — not yet written
+1. [Overview](overview.md)
+2. [Groups and tasks](groups-and-tasks.md)
 3. [Ordering your groups](group-order.md)
-4. *Task states and types* — not yet written
-5. *Prerequisites* — not yet written
-6. *Tracking time* — not yet written
-7. *Comments* — not yet written
+4. [Task states and types](task-states-and-types.md)
+5. [Prerequisites](prerequisites.md)
+6. [Tracking time](tracking-time.md)
+7. [Comments](comments.md)
 8. [Dates and the calendar](dates-and-calendar.md)
-9. *Reminders* — not yet written
-10. *Themes and settings* — not yet written
+9. [Reminders](reminders.md)
+10. [Themes and settings](themes-and-settings.md)
 
-"Not yet written" is deliberate and honest: the handbook starts from today and
-fills in backwards, rather than pretending to be complete. A chapter is written
-when its feature is next touched, or in a dedicated pass.
+All ten are now written. The same honesty rule still applies in the other
+direction: where a feature exists in the data but has no way to reach it from
+either app — prerequisites, most of what reminders imply — the chapter opens
+by saying so rather than describing an experience you cannot have.
 
 ## Writing conventions
 
