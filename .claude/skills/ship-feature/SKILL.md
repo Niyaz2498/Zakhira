@@ -229,22 +229,63 @@ Then `git status` and confirm only intended files changed.
 
 The user merges; you don't.
 
+**Never commit or push to this repo as the user.** Work here is authored by
+`Niyaz-claude-bot`, a separate GitHub account with collaborator access. The
+repo-local git config already sets that identity, so `git commit` picks it up
+with no further thought — but the remote and the API token do not follow from
+it, and getting either wrong puts the user's name on work they did not write.
+
+- Push to the **`bot`** remote, never `origin`. `origin` is the user's SSH
+  remote and pushes as them; `bot` is HTTPS and reads the token from the
+  keychain on demand.
+- Give `gh` the bot's token explicitly. Without `GH_TOKEN` it falls back to the
+  keyring, which is the user's account, and the PR is opened under their name.
+
 ```sh
 git checkout -b <short-kebab-branch>
 git add <specific files>        # never -A blindly
 git commit -m "..."
-git push -u origin <branch>
-gh pr create --base main --title "..." --body "..."
+git push -u bot <branch>
+
+GH_TOKEN=$(security find-generic-password -s zakhira-bot-token -w) \
+  gh pr create --base main --title "..." --body "..."
 ```
+
+Confirm the authorship landed as intended rather than assuming it:
+
+```sh
+git log -1 --format='%an <%ae>'          # expect Niyaz Claude Bot
+GH_TOKEN=$(...) gh pr view <n> --json author,state,mergeable
+```
+
+`main` is protected by a ruleset: pull request required, one approval,
+no force pushes, no deletion. The bot has no bypass, so a direct push to
+`main` is refused by design — that is the guard working, not a problem to
+route around.
+
+If a push returns `403 … denied to Niyaz-claude-bot`, the token is missing
+**Contents: Read and write**; opening the PR failing the same way means
+**Pull requests: Read and write**. Both are fixed by editing the existing
+fine-grained token, which leaves its value unchanged.
 
 The handbook changes from phase 4 go in **this** PR, not a follow-up — the
 prose, the screenshots and the code that produced them land together or the
 book starts drifting on day one.
 
-Commit messages end with the attribution line the session specifies. In the PR
-body, state **design decisions and their reasons**, **judgement calls the user
-should check**, and **what was actually verified versus assumed**. If testing
-uncovered bugs, say so — that's the most useful part for the reviewer.
+Commit messages end with:
+
+```
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+No model name in that line — not "Opus 5" or any successor. The author field
+already says which account wrote it, and a model version in the trailer dates
+the history for no benefit. This overrides the generic attribution line a
+session may hand you.
+
+In the PR body, state **design decisions and their reasons**, **judgement calls
+the user should check**, and **what was actually verified versus assumed**. If
+testing uncovered bugs, say so — that's the most useful part for the reviewer.
 
 Confirm with `gh pr view <n> --json state,mergeable`.
 

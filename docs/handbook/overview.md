@@ -39,6 +39,8 @@ They are not identical, and it is worth knowing which is which:
 | Task History — find and recover finished work | no | yes |
 | Create a reminder | no | yes |
 | Hourly alerts for a timer left running | yes | no |
+| Open and read your work with no connection | yes | yes |
+| **Make** changes with no connection | yes | no |
 
 The phone is for doing the work; the desktop is for arranging it. Where
 something exists on only one of them, the chapter that covers it says so.

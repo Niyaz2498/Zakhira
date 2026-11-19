@@ -17,8 +17,11 @@ import {
   buildGroupTree,
   flattenGroupTree,
   ancestorGroupIds,
+  describeSyncState,
+  pendingTargetIds,
 } from "@zakhira/core";
 import type { Task } from "@zakhira/core";
+import { SyncNotice, PendingBadge } from "../../src/components/SyncNotice";
 
 type GroupBy = "type" | "group" | "status";
 
@@ -96,7 +99,9 @@ const statStyles = StyleSheet.create({
 
 // ── Task tile ────────────────────────────────────────────────────────────────
 
-function TaskTile({ task, groupName, tokens, onPress }: { task: Task; groupName: string; tokens: any; onPress: () => void }) {
+function TaskTile({ task, groupName, tokens, pending, onPress }: {
+  task: Task; groupName: string; tokens: any; pending: boolean; onPress: () => void;
+}) {
   const overdue = isOverdue(task);
   const priority = task.importance != null ? PRIORITY_LABEL[task.importance] : null;
   const priorityColor = task.importance != null ? PRIORITY_COLOR[task.importance] : null;
@@ -124,6 +129,7 @@ function TaskTile({ task, groupName, tokens, onPress }: { task: Task; groupName:
           {TYPE_ICONS[task.type]} {groupName}
         </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {pending && <PendingBadge tokens={tokens} />}
           {overdue && <View style={tileStyles.overdueDot} />}
           <View style={[tileStyles.stateDot, { backgroundColor: stateColor[task.state] ?? tokens.stateTodo }]} />
         </View>
@@ -179,7 +185,10 @@ export default function DashboardScreen() {
   const [groupBy, setGroupBy] = useState<GroupBy>("type");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
-  const handleRefresh = useCallback(() => { sync(); }, []);
+  // A pull or a tap is an explicit "tell me what's really there", so it takes
+  // the full list rather than a delta — the only way a row deleted on another
+  // device stops showing here without restarting the app.
+  const handleRefresh = useCallback(() => { void sync({ full: true }); }, []);
 
   const handleTaskUpdated = useCallback((updated: Task) => {
     // Reflect update locally without a full sync
@@ -190,6 +199,8 @@ export default function DashboardScreen() {
     () => new Map(store.groups.map((g) => [g.id, g.name])),
     [store.groups]
   );
+
+  const pendingIds = useMemo(() => pendingTargetIds(store.pending), [store.pending]);
 
   const activeTasks = useMemo(
     () => store.tasks.filter((t) => t.state !== "completed" && t.state !== "scrapped"),
@@ -263,7 +274,9 @@ export default function DashboardScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* First-load spinner */}
+      <SyncNotice tokens={tokens} />
+
+      {/* First-load spinner — only ever seen before there is a cache to show */}
       {store.syncing && store.tasks.length === 0 && (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
           <ActivityIndicator size="large" color={tokens.accent} />
@@ -358,6 +371,7 @@ export default function DashboardScreen() {
                       task={task}
                       groupName={groupNames.get(task.groupId) ?? ""}
                       tokens={tokens}
+                      pending={pendingIds.has(task.id)}
                       onPress={() => setSelectedTask(task)}
                     />
                   ))}

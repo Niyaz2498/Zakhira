@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, or, desc } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware, assertGroupAccess } from "../middleware/auth.js";
+import { readClientId } from "../utils/ids.js";
 import type { Bindings, AuthContext, AppDB } from "../types.js";
 import type { Task, TaskComment } from "@zakhira/core";
 import {
@@ -108,6 +109,7 @@ app.get("/:id", async (c) => {
 app.post("/", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json<{
+    id?: unknown;
     title: string;
     groupId: string;
     type: Task["type"];
@@ -123,7 +125,28 @@ app.post("/", async (c) => {
   if (!body.groupId) return c.json({ ok: false, error: "groupId is required" }, 400);
   assertGroupAccess(auth, body.groupId);
 
+  const clientId = readClientId(body.id);
+  if ("error" in clientId) return c.json({ ok: false, error: clientId.error }, 400);
+
   const db = drizzle(c.env.DB, { schema }) as AppDB;
+
+  // An offline client replays its queue until the server confirms each write,
+  // so the same create can arrive twice — once for real, once because the
+  // response was lost on the way back. The id is what makes the second arrival
+  // recognisable: the task is already stored, so hand back the stored one
+  // rather than filing the user's task a second time.
+  if (clientId.id !== null) {
+    const existing = await loadTask(db, clientId.id);
+    if (existing) {
+      // Not assertGroupAccess: a 403 here would confirm that someone else's row
+      // holds this id. A caller choosing an id it cannot reach is told only
+      // that the id is taken.
+      if (!auth.allowedGroupIds.includes(existing.groupId)) {
+        return c.json({ ok: false, error: "id already in use", code: "ID_TAKEN" }, 409);
+      }
+      return c.json({ ok: true, data: existing });
+    }
+  }
 
   // Validate prerequisites
   if (body.prerequisites?.length) {
@@ -145,7 +168,7 @@ app.post("/", async (c) => {
   }
 
   const now = new Date().toISOString();
-  const id = crypto.randomUUID();
+  const id = clientId.id ?? crypto.randomUUID();
   await db.insert(schema.tasks).values({
     id,
     groupId: body.groupId,

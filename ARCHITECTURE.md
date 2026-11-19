@@ -193,10 +193,12 @@ Both apps use the same pattern: a **module-level singleton** with a manual obser
                   └──────────────────────────────────────┘
 ```
 
-**Mobile** (`apps/mobile/src/store/index.ts`):
+**Mobile** (`apps/mobile/src/store/index.ts`) — offline-first:
 - Credentials are persisted in `expo-secure-store` (encrypted OS keychain)
-- Data loads from the server on boot via the `sync()` function
-- After every successful API call, the store is updated immediately with `updateTaskInStore()`, `addTaskToStore()`, etc. — so the UI reflects changes without waiting for the next sync
+- Rows **and the unsent write queue** are persisted as one JSON file in the app's document directory (`src/store/cache.ts`, via `expo-file-system`). SecureStore is wrong for this — Android caps values at ~2KB
+- The store is populated from that file before the first render, so the app opens with data and `sync()` is a reconciliation rather than the thing that fills it in
+- Writes are **local-first**: `createTaskLocally()`, `updateTaskLocally()` and friends apply the change, persist it and queue it, then return. Nothing waits on the network
+- `flushQueue()` sends queued writes oldest-first and stops at the first network failure, so writes that depend on earlier ones keep their order
 
 **Desktop** (`apps/desktop/src/store/index.ts`):
 - Credentials + cached data are persisted in `localStorage`
@@ -209,9 +211,30 @@ Both apps use the same pattern: a **module-level singleton** with a manual obser
 
 The backend has a `GET /sync?since=<ISO timestamp>` endpoint that returns all Groups, Tasks, and Reminders modified after a given timestamp. Clients pass their `lastSyncedAt` time and receive only what changed.
 
-**Mobile** does delta sync — only fetches what changed since the last sync timestamp.
+**Mobile** does a **full sync on cold start and on every foreground or pull-to-refresh**, and delta syncs in between. The full sync is not belt-and-braces: deletions are never reported by `/sync` — a deleted row simply stops being mentioned — so a persisted cache that is only ever merged into would hold deleted rows forever. `reconcileFullSync()` takes the server's complete list verbatim, which is the only thing that prunes them, while carrying over rows that have unsent local writes.
 
 **Desktop** does a full sync on every refresh (passes no `since` parameter). This is a simpler approach that avoids edge cases when the in-memory cache gets out of sync.
+
+### Conflict resolution
+
+One rule: **the newer `updatedAt` wins**. It is applied in two places that cannot disagree, because both compare the same two timestamps:
+
+- `mergeByUpdatedAt()` folds a sync response into the cache, per row
+- `resolvePendingAgainstServer()` drops a queued write when the server's copy of that row was updated *after* the user made the edit
+
+A queued write carries `queuedAt` — when the user made the change — and the optimistic row it produced carries that same value as its `updatedAt`. So when another device wins, the optimistic row is replaced by the merge *and* the now-pointless write is dropped from the queue, in the same pass.
+
+The two timestamps come from different clocks (the device's and the server's). A device with a badly wrong clock will win or lose conflicts it should not. Resolving server-side instead would mean writing a client-supplied `updatedAt`, which would hide the row from other devices' delta windows — that needs a separate server-assigned sync cursor column, which this does not have.
+
+All of this lives in `packages/core/src/offline.ts`: pure, clock-injectable, and shared so a second offline client cannot drift from the first.
+
+### Client-supplied row ids
+
+`POST /tasks` and `POST /groups` accept an optional `id` (validated as a UUID; see `backend/src/utils/ids.ts`). An offline client mints the id before the row can be sent, so the row keeps one identity for its whole life — nothing is re-keyed when the write lands, and a task filed in a group that is *itself* still queued needs no fix-up.
+
+It also makes creates **idempotent**: a replay after a lost response returns the stored row rather than filing a second one. A row whose id exists but is not reachable by the caller returns 409 `ID_TAKEN` rather than 403, so the response cannot be used to probe for another account's ids.
+
+Omitting `id` behaves exactly as before, which is what keeps installed app versions working.
 
 ---
 
@@ -332,6 +355,10 @@ The `ADMIN_SECRET` for local dev comes from `backend/.dev.vars` (gitignored). As
 
 **`updatedAt` is used as a proxy for "when was this task last worked on"** in the time stats (Today/Week/Month). This is an approximation — if you edit a task's title at 11pm, it counts as time worked that day even if you didn't log any time. A proper solution would require per-session time entries.
 
-**The desktop store hydrates synchronously.** `localStorage` is synchronous, so the desktop store reads all cached data before the first render. The mobile `SecureStore` is async, so the mobile app has a `loaded: false` initial state and shows a loading screen.
+**The desktop store hydrates synchronously.** `localStorage` is synchronous, so the desktop store reads all cached data before the first render. The mobile store is async (SecureStore for credentials, a file read for the cache), so the mobile app keeps a `loaded: false` initial state — but by the time it flips, the rows are already there, so the loading screen is only ever seen on the first launch after signing in.
+
+**Mobile has no connectivity listener.** `store.online` is inferred from whether requests actually succeed, not from the radio. A reachable network with an unreachable backend is the same thing to the user, and the retry loop in `app/_layout.tsx` only runs while something is queued — so the cost of asking is lower than the cost of a native module that reports an opinion about the next request.
+
+**Group delete, group reorder and comments are not queueable.** The first two are server-side rearrangements of a whole subtree whose result a device cannot predict; comments are fetched per task and never synced, so there is no local copy to append to. All three say they need a connection rather than failing obscurely.
 
 **Completed and scrapped tasks are read-only in the UI.** The `isDone` flag (`state === "completed" || state === "scrapped"`) hides the status picker and disables the timer. The API will still accept updates to these tasks if you call it directly.

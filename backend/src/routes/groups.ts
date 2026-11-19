@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, or, inArray } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import { authMiddleware, assertGroupAccess } from "../middleware/auth.js";
+import { readClientId } from "../utils/ids.js";
 import type { Bindings, AuthContext, AppDB } from "../types.js";
 import type { Group } from "@zakhira/core";
 import { groupSubtreeIds, wouldCreateGroupCycle } from "@zakhira/core";
@@ -93,6 +94,7 @@ app.get("/:id", async (c) => {
 app.post("/", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json<{
+    id?: unknown;
     name: string;
     description?: string;
     parentId?: string | null;
@@ -102,8 +104,27 @@ app.post("/", async (c) => {
   }>();
   if (!body.name?.trim()) return c.json({ ok: false, error: "name is required" }, 400);
 
+  const clientId = readClientId(body.id);
+  if ("error" in clientId) return c.json({ ok: false, error: clientId.error }, 400);
+
   const db = drizzle(c.env.DB, { schema }) as AppDB;
   const parentId = body.parentId ?? null;
+
+  // Idempotent replay: see the same branch in `routes/tasks.ts`. A queued
+  // create that already landed comes back as the stored group, so an offline
+  // client retrying a write it never got an answer to does not end up with the
+  // group twice.
+  if (clientId.id !== null) {
+    const existing = await db.query.groups.findFirst({
+      where: eq(schema.groups.id, clientId.id),
+    });
+    if (existing) {
+      if (!auth.allowedGroupIds.includes(existing.id)) {
+        return c.json({ ok: false, error: "id already in use", code: "ID_TAKEN" }, 409);
+      }
+      return c.json({ ok: true, data: toGroup(existing) });
+    }
+  }
 
   // A brand-new group has no descendants, so pass null as the group being
   // moved — only the parent's existence and ownership need checking.
@@ -111,7 +132,7 @@ app.post("/", async (c) => {
   if (parentError) return c.json({ ok: false, error: parentError }, 400);
 
   const now = new Date().toISOString();
-  const id = crypto.randomUUID();
+  const id = clientId.id ?? crypto.randomUUID();
   await db.insert(schema.groups).values({
     id,
     userId: auth.userId,

@@ -37,6 +37,16 @@ export interface CreateGroupInput {
   startDate?: string;
   endDate?: string;
   importance?: number;
+  /**
+   * Id to store the group under, instead of one the server mints.
+   *
+   * For a client that creates rows while offline: the group is already on
+   * screen under this id, so keeping it makes the write a plain replay rather
+   * than something that has to be re-keyed afterwards. It also makes the create
+   * idempotent — sending it twice, after a response goes missing, returns the
+   * group that is already there instead of a duplicate.
+   */
+  id?: string;
 }
 
 export interface UpdateGroupInput {
@@ -80,6 +90,8 @@ export interface CreateTaskInput {
   importance?: number;
   notes?: string;
   prerequisites?: string[];
+  /** Id to store the task under, instead of one the server mints. See `CreateGroupInput.id`. */
+  id?: string;
 }
 
 export interface UpdateTaskInput {

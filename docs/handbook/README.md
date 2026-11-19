@@ -41,8 +41,9 @@ this list.
 8. [Dates and the calendar](dates-and-calendar.md)
 9. [Reminders](reminders.md)
 10. [Themes and settings](themes-and-settings.md)
+11. [Working offline](working-offline.md)
 
-All ten are now written. The same honesty rule still applies in the other
+All eleven are now written. The same honesty rule still applies in the other
 direction: where a feature exists in the data but has no way to reach it from
 either app — prerequisites, most of what reminders imply — the chapter opens
 by saying so rather than describing an experience you cannot have.
