@@ -217,6 +217,13 @@ app.patch("/:id", async (c) => {
     prerequisites?: string[];
   }>();
 
+  // POST has always refused a blank title; PATCH did not, so `{"title": ""}`
+  // would quietly store a task with no name and nothing to click on in a list.
+  // Checked only when the key is present: omitting it still means "leave it".
+  if ("title" in body && !body.title?.trim()) {
+    return c.json({ ok: false, error: "title cannot be empty" }, 400);
+  }
+
   if (existing.state === "completed" || existing.state === "scrapped") {
     // Allow: recovery (state → todo) OR timer stop (timerStartedAt → null + timeLogged)
     const isRecovery = body.state === "todo" && !body.title && !body.groupId
@@ -273,7 +280,9 @@ app.patch("/:id", async (c) => {
   await db
     .update(schema.tasks)
     .set({
-      title: body.title ?? existing.title,
+      // Trimmed like POST does, so the same title typed into either endpoint
+      // is stored the same way.
+      title: body.title?.trim() ?? existing.title,
       groupId: newGroupId,
       type: body.type ?? existing.type,
       state: body.state ?? existing.state,

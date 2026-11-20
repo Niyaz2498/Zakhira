@@ -5,9 +5,8 @@ whether the work counts. Its **state** says where the work has got to.
 
 ## Types: what counts
 
-You pick a type when you create a task. It can be changed later on the
-desktop, along with the task's other details; on the phone it is fixed once
-created.
+You pick a type when you create a task, and you can change it later through
+**Edit** on the task, along with the task's other details.
 
 | Type | What it means |
 |---|---|

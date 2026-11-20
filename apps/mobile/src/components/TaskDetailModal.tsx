@@ -11,7 +11,7 @@ import {
   Alert,
   Keyboard,
 } from "react-native";
-import type { Task, TaskState, TaskComment } from "@zakhira/core";
+import type { Task, TaskState, TaskType, TaskComment } from "@zakhira/core";
 import {
   sortTaskComments,
   formatCommentAge,
@@ -20,11 +20,13 @@ import {
   canComplete,
   blockingPrerequisites,
   hasPendingWrite,
+  todayKey,
   TASK_COMMENT_MAX_LENGTH,
 } from "@zakhira/core";
 import { getClient, updateTaskLocally } from "../store";
 import { useStore } from "../store/useStore";
 import { PendingBadge } from "./SyncNotice";
+import { DateField } from "./DateField";
 
 const TYPE_ICONS: Record<string, string> = { main: "⚔", side: "📍", exploration: "⚗" };
 const TYPE_LABEL: Record<string, string> = { main: "Main Quest", side: "Side Quest", exploration: "Exploration" };
@@ -38,6 +40,10 @@ const STATE_OPTIONS: { key: TaskState; label: string; color: string }[] = [
   { key: "completed",   label: "Completed",   color: "#22c55e" },
   { key: "scrapped",    label: "Scrapped",    color: "#475569" },
 ];
+
+/** Editable in the same order the create form offers them. */
+const TYPE_ORDER: TaskType[] = ["main", "side", "exploration"];
+const PRIORITY_ORDER = [1, 2, 3];
 
 function formatTime(seconds: number): string {
   if (seconds === 0) return "0s";
@@ -66,6 +72,24 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
   // Live elapsed seconds computed from ct.timerStartedAt
   const [liveElapsed, setLiveElapsed] = useState(0);
 
+  // ─── Editing the task itself ───────────────────────────────────────────────
+  //
+  // A whole-form mode rather than per-field inline editing, matching the
+  // desktop modal: the two apps offer the same fields behind the same Edit
+  // button, so neither teaches a habit the other refuses.
+  //
+  // The drafts are seeded from the task when the form opens, not held in step
+  // with it. Mid-edit, `ct` can still change underneath — a sync landing
+  // another device's edit — and re-seeding then would overwrite what is being
+  // typed. Save sends only this form's fields, so anything that arrived
+  // meanwhile and is not on the form survives.
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [editTitle, setEditTitle] = useState("");
+  const [editType, setEditType] = useState<TaskType>("main");
+  const [editImportance, setEditImportance] = useState<number | null>(null);
+  const [editEndDate, setEditEndDate] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
   // ─── Comments ──────────────────────────────────────────────────────────────
   // Comments are not carried by delta sync, so the store has no copy of them:
   // the log is fetched when the task opens and the response is authoritative.
@@ -91,6 +115,10 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
   const scrollRef = useRef<ScrollView>(null);
   const composerY = useRef(0);
   const cardY = useRef<Record<string, number>>({});
+  // The edit form's two text inputs get the same treatment as the composer —
+  // Notes in particular sits at the bottom of the form, where the keyboard
+  // would otherwise leave it below the shortened viewport.
+  const editFieldY = useRef<Record<string, number>>({});
   const [kbHeight, setKbHeight] = useState(0);
 
   useEffect(() => {
@@ -131,9 +159,13 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
     return () => clearTimeout(id);
   }, [kbHeight]);
 
-  // Keep ct in sync when the outer task prop changes (e.g. new task opened)
+  // Keep ct in sync when the outer task prop changes (e.g. new task opened).
+  // A different task means any half-finished edit belongs to the one that just
+  // closed, so the form goes back to view rather than carrying those drafts
+  // onto another task.
   useEffect(() => {
     setCt(task);
+    setMode("view");
   }, [task?.id]);
 
   const loadComments = useCallback(async (taskId: string) => {
@@ -279,6 +311,46 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
     [ct, onTaskUpdated]
   );
 
+  const beginEdit = useCallback(() => {
+    if (!ct) return;
+    setEditTitle(ct.title);
+    setEditType(ct.type);
+    setEditImportance(ct.importance);
+    setEditEndDate(ct.endDate ?? "");
+    setEditNotes(ct.notes ?? "");
+    setMode("edit");
+  }, [ct]);
+
+  const cancelEdit = useCallback(() => {
+    Keyboard.dismiss();
+    setMode("view");
+  }, []);
+
+  /**
+   * Commit the form. Like every other edit here this is applied on the device
+   * and queued, so it works with no connection and there is nothing to wait on.
+   *
+   * The nullable fields are sent explicitly as `null` when cleared: an absent
+   * key means "leave it alone" to both `applyTaskPatch` and the backend's
+   * PATCH, so omitting them would make clearing a due date impossible.
+   */
+  const saveEdit = useCallback(() => {
+    const title = editTitle.trim();
+    if (!title) {
+      Alert.alert("Title required", "A task needs a title.");
+      return;
+    }
+    Keyboard.dismiss();
+    applyEdit({
+      title,
+      type: editType,
+      importance: editImportance,
+      endDate: editEndDate.trim() || null,
+      notes: editNotes.trim() || null,
+    });
+    setMode("view");
+  }, [editTitle, editType, editImportance, editEndDate, editNotes, applyEdit]);
+
   const handleTimerStart = useCallback(() => {
     applyEdit({ timerStartedAt: new Date().toISOString() });
   }, [applyEdit]);
@@ -338,18 +410,52 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
     <Modal
       visible={task !== null}
       animationType="slide"
-      onRequestClose={onClose}
+      // Android's back gesture backs out of the form first rather than
+      // discarding the whole modal, so one stray swipe mid-edit costs a field,
+      // not the task view.
+      onRequestClose={mode === "edit" ? cancelEdit : onClose}
     >
       <View style={[s.root, { backgroundColor: tokens.bgPage }]}>
-        {/* Header */}
+        {/* Header — Close/Edit in view mode, Cancel/Save while editing. The
+            save action lives up here rather than at the foot of the form so it
+            stays reachable with the keyboard up. */}
         <View style={[s.header, { borderBottomColor: tokens.border, backgroundColor: tokens.bgSurface }]}>
-          <TouchableOpacity onPress={onClose} style={s.closeBtn}>
-            <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>✕ Close</Text>
-          </TouchableOpacity>
-          {pending && <PendingBadge tokens={tokens} label />}
+          {mode === "view" ? (
+            <>
+              <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+                <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>✕ Close</Text>
+              </TouchableOpacity>
+              <View style={s.headerRight}>
+                {pending && <PendingBadge tokens={tokens} label />}
+                {/* No Edit button once the task is closed: the backend refuses
+                    edits to a completed or scrapped task, and offering a button
+                    that queues a write only to have it rejected on the next
+                    sync would be a lie. Recover it first. */}
+                {ct && !isDone && (
+                  <TouchableOpacity onPress={beginEdit} style={s.closeBtn} hitSlop={8}>
+                    <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>Edit</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity onPress={cancelEdit} style={s.closeBtn} hitSlop={8}>
+                <Text style={{ color: tokens.textSecondary, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={{ color: tokens.textPrimary, fontSize: 17, fontWeight: "600" }}>Edit Task</Text>
+              <TouchableOpacity onPress={saveEdit} style={s.closeBtn} hitSlop={8}>
+                <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>Save</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
-        {ct && (
+        {/* View and edit are two scroll views rather than one with a branch
+            inside: only one is mounted at a time, so `scrollRef` always points
+            at the live one, and entering the form starts at its top instead of
+            inheriting however far the detail view was scrolled. */}
+        {ct && mode === "view" && (
           <ScrollView
             ref={scrollRef}
             // The extra bottom padding while the keyboard is up is what makes
@@ -657,6 +763,127 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
 
           </ScrollView>
         )}
+
+        {/* ─── Edit form ───────────────────────────────────────────────────────
+            The same five fields the create form and the desktop modal offer.
+            State and the timer are deliberately absent: both are one-tap
+            controls in the detail view and neither belongs behind a Save. */}
+        {ct && mode === "edit" && (
+          <ScrollView
+            ref={scrollRef}
+            contentContainerStyle={{ padding: 20, paddingBottom: 48 + kbHeight }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={[s.fieldLabel, { color: tokens.textSecondary }]}>Title *</Text>
+            <View onLayout={(e) => { editFieldY.current.title = e.nativeEvent.layout.y; }}>
+              <TextInput
+                value={editTitle}
+                onChangeText={setEditTitle}
+                placeholder="Task title"
+                placeholderTextColor={tokens.textTertiary}
+                onFocus={() => scrollIntoView(editFieldY.current.title ?? 0)}
+                style={[
+                  s.fieldInput,
+                  { backgroundColor: tokens.bgCard, borderColor: tokens.border, color: tokens.textPrimary },
+                ]}
+              />
+            </View>
+
+            <Text style={[s.fieldLabel, { color: tokens.textSecondary }]}>Type</Text>
+            <View style={s.typeRow}>
+              {TYPE_ORDER.map((t) => {
+                const active = editType === t;
+                return (
+                  <TouchableOpacity
+                    key={t}
+                    onPress={() => setEditType(t)}
+                    style={[
+                      s.typeBtn,
+                      {
+                        borderColor: active ? tokens.accent : tokens.border,
+                        backgroundColor: active ? tokens.accent + "22" : tokens.bgCard,
+                      },
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 16 }}>{TYPE_ICONS[t]}</Text>
+                    <Text
+                      style={{
+                        fontSize: 10,
+                        fontWeight: "600",
+                        marginTop: 4,
+                        color: active ? tokens.accent : tokens.textSecondary,
+                      }}
+                    >
+                      {TYPE_LABEL[t]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Tapping the active priority clears it — the field is optional,
+                and without that there would be no way back to "none". */}
+            <Text style={[s.fieldLabel, { color: tokens.textSecondary }]}>Priority</Text>
+            <View style={s.typeRow}>
+              {PRIORITY_ORDER.map((p) => {
+                const active = editImportance === p;
+                return (
+                  <TouchableOpacity
+                    key={p}
+                    onPress={() => setEditImportance(active ? null : p)}
+                    style={[
+                      s.priorityBtn,
+                      {
+                        borderColor: active ? PRIORITY_COLOR[p] : tokens.border,
+                        backgroundColor: active ? PRIORITY_COLOR[p] + "22" : tokens.bgCard,
+                      },
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        fontWeight: "600",
+                        color: active ? PRIORITY_COLOR[p] : tokens.textSecondary,
+                      }}
+                    >
+                      {PRIORITY_LABEL[p]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <DateField
+              label="Due Date"
+              value={editEndDate}
+              onChange={setEditEndDate}
+              tokens={tokens}
+              // Same bound as the create form: a deadline in the past is never
+              // what someone means to set. A date already in the past stays
+              // put unless it is touched, so this only constrains new choices.
+              minDate={todayKey()}
+            />
+
+            <Text style={[s.fieldLabel, { color: tokens.textSecondary }]}>Notes</Text>
+            <View onLayout={(e) => { editFieldY.current.notes = e.nativeEvent.layout.y; }}>
+              <TextInput
+                value={editNotes}
+                onChangeText={setEditNotes}
+                placeholder="Optional"
+                placeholderTextColor={tokens.textTertiary}
+                multiline
+                onFocus={() => scrollIntoView(editFieldY.current.notes ?? 0)}
+                style={[
+                  s.fieldInput,
+                  s.fieldTextarea,
+                  { backgroundColor: tokens.bgCard, borderColor: tokens.border, color: tokens.textPrimary },
+                ]}
+              />
+            </View>
+          </ScrollView>
+        )}
       </View>
     </Modal>
   );
@@ -674,6 +901,27 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
   },
   closeBtn: { padding: 4 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 14 },
+  // Mirrors the create form's `cm.label` / `cm.input` so the two forms read as
+  // the same form, which is what they are.
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  fieldInput: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 15, marginBottom: 20 },
+  fieldTextarea: { height: 110, textAlignVertical: "top" },
+  typeRow: { flexDirection: "row", gap: 8, marginBottom: 20 },
+  typeBtn: { flex: 1, borderWidth: 1, borderRadius: 10, padding: 10, alignItems: "center" },
+  priorityBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
   metaRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
   metaText: { fontSize: 12, fontWeight: "600" },
   title: { fontSize: 22, fontWeight: "700", lineHeight: 30, marginBottom: 14 },
