@@ -17,9 +17,14 @@ import {
   formatCommentAge,
   isCommentEdited,
   canCommentOnTask,
+  canComplete,
+  blockingPrerequisites,
+  hasPendingWrite,
   TASK_COMMENT_MAX_LENGTH,
 } from "@zakhira/core";
-import { getClient, updateTaskInStore } from "../store";
+import { getClient, updateTaskLocally } from "../store";
+import { useStore } from "../store/useStore";
+import { PendingBadge } from "./SyncNotice";
 
 const TYPE_ICONS: Record<string, string> = { main: "⚔", side: "📍", exploration: "⚗" };
 const TYPE_LABEL: Record<string, string> = { main: "Main Quest", side: "Side Quest", exploration: "Exploration" };
@@ -52,8 +57,12 @@ interface Props {
 }
 
 export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdated }: Props) {
+  const store = useStore();
   const [ct, setCt] = useState<Task | null>(task);
-  const [saving, setSaving] = useState(false);
+  // Task edits no longer have a saving state: they are applied on the device
+  // and queued, so there is never a moment where the screen is waiting for one.
+  // What can still be true is that the server has not caught up yet.
+  const pending = ct ? hasPendingWrite(store.pending, ct.id) : false;
   // Live elapsed seconds computed from ct.timerStartedAt
   const [liveElapsed, setLiveElapsed] = useState(0);
 
@@ -252,41 +261,33 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
   const timerRunning = ct?.timerStartedAt != null;
   const displaySeconds = (ct?.timeLogged ?? 0) + liveElapsed;
 
-  const handleTimerStart = useCallback(async () => {
-    if (!ct) return;
-    setSaving(true);
-    try {
-      const client = getClient();
-      if (!client) return;
-      const res = await client.updateTask(ct.id, { timerStartedAt: new Date().toISOString() });
-      if (res.ok) {
-        setCt(res.data);
-        updateTaskInStore(res.data);
-        onTaskUpdated(res.data);
-      }
-    } finally {
-      setSaving(false);
-    }
-  }, [ct, onTaskUpdated]);
+  /**
+   * Apply an edit to the task on the device and queue it for the server.
+   *
+   * Every task edit in this modal goes through here, so none of them depend on
+   * a connection: the timer starts when it is tapped, not when a round trip
+   * finishes, and the same tap on a train behaves identically.
+   */
+  const applyEdit = useCallback(
+    (input: Parameters<typeof updateTaskLocally>[1]) => {
+      if (!ct) return;
+      const updated = updateTaskLocally(ct.id, input);
+      if (!updated) return;
+      setCt(updated);
+      onTaskUpdated(updated);
+    },
+    [ct, onTaskUpdated]
+  );
 
-  const handleTimerStop = useCallback(async () => {
+  const handleTimerStart = useCallback(() => {
+    applyEdit({ timerStartedAt: new Date().toISOString() });
+  }, [applyEdit]);
+
+  const handleTimerStop = useCallback(() => {
     if (!ct?.timerStartedAt) return;
     const elapsed = Math.floor((Date.now() - new Date(ct.timerStartedAt).getTime()) / 1000);
-    const total = ct.timeLogged + elapsed;
-    setSaving(true);
-    try {
-      const client = getClient();
-      if (!client) return;
-      const res = await client.updateTask(ct.id, { timeLogged: total, timerStartedAt: null });
-      if (res.ok) {
-        setCt(res.data);
-        updateTaskInStore(res.data);
-        onTaskUpdated(res.data);
-      }
-    } finally {
-      setSaving(false);
-    }
-  }, [ct, onTaskUpdated]);
+    applyEdit({ timeLogged: ct.timeLogged + elapsed, timerStartedAt: null });
+  }, [ct, applyEdit]);
 
   const handleTimerReset = useCallback(() => {
     if (!ct) return;
@@ -295,39 +296,36 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
       {
         text: "Reset",
         style: "destructive",
-        onPress: async () => {
-          setSaving(true);
-          try {
-            const client = getClient();
-            if (!client) return;
-            const res = await client.updateTask(ct.id, { timeLogged: 0, timerStartedAt: null });
-            if (res.ok) {
-              setCt(res.data);
-              updateTaskInStore(res.data);
-              onTaskUpdated(res.data);
-            }
-          } finally {
-            setSaving(false);
-          }
-        },
+        onPress: () => applyEdit({ timeLogged: 0, timerStartedAt: null }),
       },
     ]);
-  }, [ct, onTaskUpdated]);
+  }, [ct, applyEdit]);
 
-  const handleStateChange = useCallback(async (newState: TaskState) => {
-    if (!ct || newState === ct.state) return;
-    setSaving(true);
-    try {
-      const client = getClient();
-      if (!client) return;
-      const res = await client.updateTask(ct.id, { state: newState });
-      if (res.ok) {
-        setCt(res.data);
-        updateTaskInStore(res.data);
-        onTaskUpdated(res.data);
+  const handleStateChange = useCallback(
+    (newState: TaskState) => {
+      if (!ct || newState === ct.state) return;
+
+      // The prerequisite gate is checked here rather than left to the server.
+      // Offline there is nobody to refuse the change, and a task that shows as
+      // completed for an hour and then quietly reverts is worse than being
+      // told now — the same rule, from the same function the backend uses.
+      if (newState === "completed") {
+        const groupTasks = store.tasks.filter((t) => t.groupId === ct.groupId);
+        if (!canComplete(ct, groupTasks)) {
+          const blockers = blockingPrerequisites(ct, groupTasks);
+          Alert.alert(
+            "Prerequisites still open",
+            blockers.length
+              ? `Finish ${blockers.map((t) => `“${t.title}”`).join(", ")} first.`
+              : "This task is waiting on another one."
+          );
+          return;
+        }
       }
-    } finally { setSaving(false); }
-  }, [ct, onTaskUpdated]);
+      applyEdit({ state: newState });
+    },
+    [ct, store.tasks, applyEdit]
+  );
 
   const isDone = ct ? (ct.state === "completed" || ct.state === "scrapped") : false;
   const priorityColor = ct?.importance != null ? PRIORITY_COLOR[ct.importance] : null;
@@ -348,7 +346,7 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
           <TouchableOpacity onPress={onClose} style={s.closeBtn}>
             <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>✕ Close</Text>
           </TouchableOpacity>
-          {saving && <ActivityIndicator size="small" color={tokens.accent} />}
+          {pending && <PendingBadge tokens={tokens} label />}
         </View>
 
         {ct && (
@@ -404,7 +402,6 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                     <TouchableOpacity
                       key={opt.key}
                       onPress={() => handleStateChange(opt.key)}
-                      disabled={saving}
                       style={[
                         s.stateBtn,
                         { borderColor: ct.state === opt.key ? opt.color : tokens.border },
@@ -432,7 +429,6 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                     <TouchableOpacity
                       style={[s.timerBtn, s.timerBtnStart, { backgroundColor: tokens.accent }]}
                       onPress={handleTimerStart}
-                      disabled={saving}
                       activeOpacity={0.8}
                     >
                       <Text style={[s.timerBtnText, { color: tokens.accentOn }]}>▶  Start</Text>
@@ -441,7 +437,6 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                     <TouchableOpacity
                       style={[s.timerBtn, s.timerBtnStart, { backgroundColor: "#b80000" }]}
                       onPress={handleTimerStop}
-                      disabled={saving}
                       activeOpacity={0.8}
                     >
                       <Text style={[s.timerBtnText, { color: "#fff" }]}>⏹  Stop</Text>
@@ -450,10 +445,10 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                   <TouchableOpacity
                     style={[s.timerBtn, { borderWidth: 1, borderColor: tokens.border, backgroundColor: tokens.bgSurface }]}
                     onPress={handleTimerReset}
-                    disabled={saving || timerRunning}
+                    disabled={timerRunning}
                     activeOpacity={0.8}
                   >
-                    <Text style={[s.timerBtnText, { color: saving || timerRunning ? tokens.textTertiary : tokens.textSecondary }]}>
+                    <Text style={[s.timerBtnText, { color: timerRunning ? tokens.textTertiary : tokens.textSecondary }]}>
                       ↺  Reset
                     </Text>
                   </TouchableOpacity>
@@ -531,6 +526,15 @@ export function TaskDetailModal({ task, groupName, tokens, onClose, onTaskUpdate
                 is locked.
               </Text>
             )}
+
+            {/* Comments are the one thing here that still needs the server.
+                They are fetched per task rather than synced, so there is no
+                local copy to append to and nothing to reconcile afterwards. */}
+            {!store.online && canCommentOnTask(ct) ? (
+              <Text style={{ color: tokens.textTertiary, fontSize: 12, marginBottom: 14 }}>
+                Comments are not stored on the device — this one needs a connection to post.
+              </Text>
+            ) : null}
 
             {commentsError ? (
               <TouchableOpacity

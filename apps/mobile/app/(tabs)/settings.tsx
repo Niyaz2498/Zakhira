@@ -9,7 +9,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../../src/theme/ThemeContext";
 import { useStore } from "../../src/store/useStore";
-import { logout } from "../../src/store";
+import { logout, sync } from "../../src/store";
+import { describeSyncState } from "@zakhira/core";
 import { useCallback } from "react";
 import { useRouter } from "expo-router";
 
@@ -19,18 +20,27 @@ export default function SettingsScreen() {
   const router = useRouter();
 
   const handleSignOut = useCallback(() => {
-    Alert.alert("Sign out?", "You'll need to sign in again to reconnect.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign out",
-        style: "destructive",
-        onPress: async () => {
-          await logout();
-          router.replace("/setup");
+    // Signing out takes the cache with it, queue included. Changes that never
+    // reached the server would go with them, so say how many before asking.
+    const unsent = store.pending.length;
+    Alert.alert(
+      "Sign out?",
+      unsent > 0
+        ? `${unsent} change${unsent === 1 ? "" : "s"} ${unsent === 1 ? "has" : "have"} not reached the server yet and will be lost. You'll need to sign in again to reconnect.`
+        : "You'll need to sign in again to reconnect.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign out",
+          style: "destructive",
+          onPress: async () => {
+            await logout();
+            router.replace("/setup");
+          },
         },
-      },
-    ]);
-  }, [router]);
+      ]
+    );
+  }, [router, store.pending.length]);
 
   const s = makeStyles(tokens);
 
@@ -56,6 +66,12 @@ export default function SettingsScreen() {
         <View style={[s.section, { borderColor: tokens.border, marginTop: 24 }]}>
           <Text style={[s.sectionTitle, { color: tokens.textSecondary }]}>Sync</Text>
           <View style={s.row}>
+            <Text style={{ color: tokens.textPrimary }}>Status</Text>
+            <Text style={{ color: tokens.textTertiary, fontSize: 12 }}>
+              {describeSyncState(store.pending.length, store.online, store.lastSyncedAt)}
+            </Text>
+          </View>
+          <View style={s.row}>
             <Text style={{ color: tokens.textPrimary }}>Last synced</Text>
             <Text style={{ color: tokens.textTertiary, fontSize: 12 }}>
               {store.lastSyncedAt
@@ -63,6 +79,23 @@ export default function SettingsScreen() {
                 : "Never"}
             </Text>
           </View>
+          <View style={s.row}>
+            <Text style={{ color: tokens.textPrimary }}>Saved on this device</Text>
+            <Text style={{ color: tokens.textTertiary, fontSize: 12 }}>
+              {store.groups.length} group{store.groups.length === 1 ? "" : "s"} ·{" "}
+              {store.tasks.length} task{store.tasks.length === 1 ? "" : "s"}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={s.row}
+            onPress={() => void sync({ full: true })}
+            disabled={store.syncing}
+          >
+            <Text style={{ color: store.syncing ? tokens.textTertiary : tokens.accent }}>
+              {store.syncing ? "Syncing…" : "Sync now"}
+            </Text>
+            <Text style={{ color: tokens.textTertiary, fontSize: 12 }}>↻</Text>
+          </TouchableOpacity>
           <View style={s.row}>
             <Text style={{ color: tokens.textPrimary }}>Server</Text>
             <Text style={{ color: tokens.textTertiary, fontSize: 12, maxWidth: 200 }} numberOfLines={1}>

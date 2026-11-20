@@ -17,9 +17,9 @@ import { useTheme } from "../../src/theme/ThemeContext";
 import { useStore } from "../../src/store/useStore";
 import {
   getClient,
-  addGroupToStore,
-  addTaskToStore,
-  updateGroupInStore,
+  createGroupLocally,
+  createTaskLocally,
+  updateGroupLocally,
   removeGroupFromStore,
   sync,
 } from "../../src/store";
@@ -30,6 +30,7 @@ import {
   compareGroupsForDisplay,
   flattenGroupTree,
   groupSubtreeIds,
+  pendingTargetIds,
   todayKey,
   wouldCreateGroupCycle,
 } from "@zakhira/core";
@@ -37,6 +38,7 @@ import type { Group, GroupNode, Task, TaskType } from "@zakhira/core";
 import { TaskDetailModal } from "../../src/components/TaskDetailModal";
 import { DateField } from "../../src/components/DateField";
 import { ReorderGroupsModal } from "../../src/components/ReorderGroupsModal";
+import { SyncNotice, PendingBadge } from "../../src/components/SyncNotice";
 
 /** Indent per nesting level, in px. */
 const INDENT = 16;
@@ -62,12 +64,13 @@ const pb = StyleSheet.create({
  * is something to collapse, and is a separate touch target so collapsing never
  * drills into the group.
  */
-function GroupCard({ node, groups, tokens, tasks, collapsed, onToggle, onPress }: {
+function GroupCard({ node, groups, tokens, tasks, collapsed, pending, onToggle, onPress }: {
   node: GroupNode;
   groups: Group[];
   tokens: any;
   tasks: Task[];
   collapsed: Set<string>;
+  pending: boolean;
   onToggle: (id: string) => void;
   onPress: () => void;
 }) {
@@ -118,9 +121,12 @@ function GroupCard({ node, groups, tokens, tasks, collapsed, onToggle, onPress }
             ) : null}
           </View>
         </View>
-        {group.importance != null && (
-          <Text style={{ color: tokens.accent, fontSize: 13 }}>{"★".repeat(Math.min(group.importance, 5))}</Text>
-        )}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          {pending && <PendingBadge tokens={tokens} />}
+          {group.importance != null && (
+            <Text style={{ color: tokens.accent, fontSize: 13 }}>{"★".repeat(Math.min(group.importance, 5))}</Text>
+          )}
+        </View>
       </View>
 
       {group.isDefault ? (
@@ -211,7 +217,6 @@ function CreateGroupModal({ visible, tokens, groups, initialParentId, onClose }:
   const [description, setDescription] = useState("");
   const [endDate, setEndDate] = useState("");
   const [parentId, setParentId] = useState<string | null>(initialParentId);
-  const [saving, setSaving] = useState(false);
 
   // Remount per open (see `key` at the call site) keeps this in sync with the
   // row that was tapped; resetting only on close would lag a step behind.
@@ -219,24 +224,21 @@ function CreateGroupModal({ visible, tokens, groups, initialParentId, onClose }:
 
   const choices = useMemo(() => parentChoices(null, groups), [groups]);
 
-  async function handleCreate() {
+  /**
+   * Create the group on the device and close. There is nothing to wait for and
+   * nothing to fail: the write goes to the queue, which sends it now if it can
+   * and on the next connection if it cannot.
+   */
+  function handleCreate() {
     if (!name.trim()) { Alert.alert("Name required"); return; }
-    setSaving(true);
-    try {
-      const client = getClient();
-      if (!client) return;
-      const res = await client.createGroup({
-        name: name.trim(),
-        ...(description.trim() && { description: description.trim() }),
-        ...(endDate.trim() && { endDate: endDate.trim() }),
-        ...(parentId && { parentId }),
-      });
-      if (!res.ok) { Alert.alert("Error", res.error); return; }
-      addGroupToStore(res.data);
-      reset();
-      onClose();
-    } catch { Alert.alert("Error", "Could not create group."); }
-    finally { setSaving(false); }
+    createGroupLocally({
+      name: name.trim(),
+      ...(description.trim() && { description: description.trim() }),
+      ...(endDate.trim() && { endDate: endDate.trim() }),
+      ...(parentId && { parentId }),
+    });
+    reset();
+    onClose();
   }
 
   return (
@@ -248,10 +250,8 @@ function CreateGroupModal({ visible, tokens, groups, initialParentId, onClose }:
               <Text style={{ color: tokens.textSecondary, fontSize: 16 }}>Cancel</Text>
             </TouchableOpacity>
             <Text style={{ color: tokens.textPrimary, fontSize: 17, fontWeight: "600" }}>New Group</Text>
-            <TouchableOpacity onPress={handleCreate} disabled={saving}>
-              {saving
-                ? <ActivityIndicator size="small" color={tokens.accent} />
-                : <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>Create</Text>}
+            <TouchableOpacity onPress={handleCreate}>
+              <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>Create</Text>
             </TouchableOpacity>
           </View>
           <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
@@ -292,21 +292,15 @@ function MoveGroupModal({ group, groups, tokens, onClose }: {
   tokens: any;
   onClose: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
   const choices = useMemo(() => (group ? parentChoices(group, groups) : []), [group, groups]);
 
-  async function move(parentId: string | null) {
+  function move(parentId: string | null) {
     if (!group) return;
-    setBusy(true);
-    try {
-      const client = getClient();
-      if (!client) return;
-      const res = await client.updateGroup(group.id, { parentId });
-      if (!res.ok) { Alert.alert("Error", res.error); return; }
-      updateGroupInStore(res.data);
-      onClose();
-    } catch { Alert.alert("Error", "Could not move group."); }
-    finally { setBusy(false); }
+    // The cycle check that matters already ran: `parentChoices` only offers
+    // parents that cannot create one, so this is safe to apply locally and
+    // reconcile later.
+    updateGroupLocally(group.id, { parentId });
+    onClose();
   }
 
   return (
@@ -317,7 +311,7 @@ function MoveGroupModal({ group, groups, tokens, onClose }: {
             <Text style={{ color: tokens.textSecondary, fontSize: 16 }}>Cancel</Text>
           </TouchableOpacity>
           <Text style={{ color: tokens.textPrimary, fontSize: 17, fontWeight: "600" }}>Move Group</Text>
-          <View style={{ width: 50 }}>{busy ? <ActivityIndicator size="small" color={tokens.accent} /> : null}</View>
+          <View style={{ width: 50 }} />
         </View>
         <ScrollView contentContainerStyle={{ padding: 20 }}>
           <Text style={{ color: tokens.textSecondary, fontSize: 13, marginBottom: 16 }}>
@@ -350,29 +344,25 @@ function CreateTaskModal({ visible, groupId, tokens, onClose }: {
   const [type, setType] = useState<TaskType>("main");
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
 
   function reset() { setTitle(""); setType("main"); setEndDate(""); setNotes(""); }
 
-  async function handleCreate() {
+  /**
+   * Create the task on the device and close. This is the whole point of the
+   * queue: a task typed with no connection is a task, listed in its group and
+   * marked as not yet synced, rather than an error about the network.
+   */
+  function handleCreate() {
     if (!title.trim()) { Alert.alert("Title required"); return; }
-    setSaving(true);
-    try {
-      const client = getClient();
-      if (!client) return;
-      const res = await client.createTask({
-        title: title.trim(),
-        groupId,
-        type,
-        ...(endDate.trim() && { endDate: endDate.trim() }),
-        ...(notes.trim() && { notes: notes.trim() }),
-      });
-      if (!res.ok) { Alert.alert("Error", res.error); return; }
-      addTaskToStore(res.data);
-      reset();
-      onClose();
-    } catch { Alert.alert("Error", "Could not create task."); }
-    finally { setSaving(false); }
+    createTaskLocally({
+      title: title.trim(),
+      groupId,
+      type,
+      ...(endDate.trim() && { endDate: endDate.trim() }),
+      ...(notes.trim() && { notes: notes.trim() }),
+    });
+    reset();
+    onClose();
   }
 
   return (
@@ -384,10 +374,8 @@ function CreateTaskModal({ visible, groupId, tokens, onClose }: {
               <Text style={{ color: tokens.textSecondary, fontSize: 16 }}>Cancel</Text>
             </TouchableOpacity>
             <Text style={{ color: tokens.textPrimary, fontSize: 17, fontWeight: "600" }}>New Task</Text>
-            <TouchableOpacity onPress={handleCreate} disabled={saving}>
-              {saving
-                ? <ActivityIndicator size="small" color={tokens.accent} />
-                : <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>Create</Text>}
+            <TouchableOpacity onPress={handleCreate}>
+              <Text style={{ color: tokens.accent, fontSize: 16, fontWeight: "600" }}>Create</Text>
             </TouchableOpacity>
           </View>
           <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
@@ -457,8 +445,8 @@ const STATE_COLORS: Record<string, string> = {
 // ── Task list pieces ──────────────────────────────────────────────────────────
 
 /** A single task row. Finished tasks render dimmed so the eye skips past them. */
-function TaskRow({ task, tokens, onPress, dimmed }: {
-  task: Task; tokens: any; onPress: () => void; dimmed?: boolean;
+function TaskRow({ task, tokens, onPress, dimmed, pending }: {
+  task: Task; tokens: any; onPress: () => void; dimmed?: boolean; pending?: boolean;
 }) {
   const sc = STATE_COLORS[task.state] ?? "#64748b";
   return (
@@ -481,6 +469,7 @@ function TaskRow({ task, tokens, onPress, dimmed }: {
       >
         {task.title}
       </Text>
+      {pending && <PendingBadge tokens={tokens} label />}
       <Text style={{ color: tokens.textTertiary, fontSize: 12 }}>›</Text>
     </TouchableOpacity>
   );
@@ -512,6 +501,7 @@ export default function GroupsScreen() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [reordering, setReordering] = useState(false);
 
+  const pendingIds = useMemo(() => pendingTargetIds(store.pending), [store.pending]);
   const tree = useMemo(() => buildGroupTree(store.groups), [store.groups]);
   const visibleRows = useMemo(() => {
     // Hide anything whose ancestor is collapsed, while keeping tree order.
@@ -561,6 +551,16 @@ export default function GroupsScreen() {
    * subtree, so "delete everything" states how much everything is.
    */
   function confirmDelete(group: Group) {
+    // Not queueable: the server re-parents or removes a whole subtree, and the
+    // result depends on a tree that may have changed since this device last
+    // saw it. Saying so beats queueing a write whose effect cannot be shown.
+    if (!store.online) {
+      Alert.alert(
+        "Needs a connection",
+        "Deleting a group rearranges everything inside it, so it has to be done with the server. Try again once you are back online."
+      );
+      return;
+    }
     const subtree = groupSubtreeIds(group.id, store.groups);
     const subgroupCount = subtree.length - 1;
     const subtreeTaskCount = store.tasks.filter((t) => subtree.includes(t.groupId)).length;
@@ -616,10 +616,17 @@ export default function GroupsScreen() {
           {/* Hidden below two groups: there is no order to set with one. */}
           {store.groups.filter((g) => g.parentId === null && !g.isDefault).length > 1 && (
             <TouchableOpacity
-              onPress={() => setReordering(true)}
-              style={[ls.reorderBtn, { borderColor: tokens.accent }]}
+              onPress={() =>
+                store.online
+                  ? setReordering(true)
+                  : Alert.alert(
+                      "Needs a connection",
+                      "Group order is numbered by the server across all your devices, so reordering has to be done online."
+                    )
+              }
+              style={[ls.reorderBtn, { borderColor: store.online ? tokens.accent : tokens.border }]}
             >
-              <Text style={{ color: tokens.accent, fontSize: 13, fontWeight: "600" }}>
+              <Text style={{ color: store.online ? tokens.accent : tokens.textTertiary, fontSize: 13, fontWeight: "600" }}>
                 ☰  Reorder
               </Text>
             </TouchableOpacity>
@@ -630,6 +637,8 @@ export default function GroupsScreen() {
         </View>
       </View>
 
+      <SyncNotice tokens={tokens} />
+
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
         {visibleRows.map((node) => (
           <GroupCard
@@ -639,6 +648,7 @@ export default function GroupsScreen() {
             tokens={tokens}
             tasks={store.tasks}
             collapsed={collapsed}
+            pending={pendingIds.has(node.group.id)}
             onToggle={toggle}
             onPress={() => setSelectedGroupId(node.group.id)}
           />
@@ -735,13 +745,26 @@ export default function GroupsScreen() {
                 Tasks  <Text style={{ color: tokens.textTertiary, fontWeight: "400" }}>{groupTasks.length}</Text>
               </Text>
               {activeTasks.map((task) => (
-                <TaskRow key={task.id} task={task} tokens={tokens} onPress={() => setSelectedTask(task)} />
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  tokens={tokens}
+                  pending={pendingIds.has(task.id)}
+                  onPress={() => setSelectedTask(task)}
+                />
               ))}
 
               {doneTasks.length > 0 && <CompletedDivider tokens={tokens} count={doneTasks.length} />}
 
               {doneTasks.map((task) => (
-                <TaskRow key={task.id} task={task} tokens={tokens} dimmed onPress={() => setSelectedTask(task)} />
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  tokens={tokens}
+                  dimmed
+                  pending={pendingIds.has(task.id)}
+                  onPress={() => setSelectedTask(task)}
+                />
               ))}
               {groupTasks.length === 0 && (
                 <Text style={{ color: tokens.textTertiary, textAlign: "center", marginTop: 40 }}>
