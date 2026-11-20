@@ -9,7 +9,7 @@ Both are free text on a task, and they are for opposite jobs.
 
 **Notes** is the brief — what the task is and what finishing looks like.
 There is one of them, you overwrite it when it changes, and it should read as
-current. (Notes can only be edited on the desktop.)
+current. (You edit it through **Edit** on the task, in either app.)
 
 **Comments** are the history — ordered entries you add as work happens. You
 add to them rather than replacing them, and old entries stay as written.

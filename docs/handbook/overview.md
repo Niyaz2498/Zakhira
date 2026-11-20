@@ -33,8 +33,9 @@ They are not identical, and it is worth knowing which is which:
 |---|---|---|
 | Browse, create groups and tasks | yes | yes |
 | Change a task's state, run its timer, write comments | yes | yes |
-| **Edit** a task's title, type, priority, due date or notes | no | yes |
+| **Edit** a task's title, type, priority, due date or notes | yes | yes |
 | Set a task's priority when creating it | no | yes |
+| Move a task to a different group | no | yes |
 | Reorder your groups | yes | no |
 | Task History — find and recover finished work | no | yes |
 | Create a reminder | no | yes |
@@ -77,11 +78,11 @@ that is already finished.
 - **No sharing or collaboration.** One account, one person.
 - **No sub-tasks.** A task is the smallest unit. If something needs breaking
   down, it wants to be a sub-group with its own tasks.
-- **No offline editing.** Both apps need to reach the server to change
-  anything. A change attempted with no connection fails and tells you so; it
-  is not queued up to send later.
-- **Offline reading differs by app.** The desktop keeps your last-loaded
-  groups and tasks, so it opens with them and you can read while offline. The
-  phone does not: reopened with no connection, it comes up empty until it can
-  reach the server again. Nothing is lost either way — the data is on your
-  account, not on the device.
+- **No offline editing on the desktop.** The desktop needs to reach the server
+  to change anything; a change attempted with no connection fails and tells you
+  so. The phone queues its changes instead — see
+  [Working offline](working-offline.md).
+- **No second copy of your data.** Both apps keep your last-loaded groups and
+  tasks on the device so they open with them and read fine offline, but that
+  copy is a convenience, not a backup: it goes away when you sign out or
+  uninstall. The data lives on your account.

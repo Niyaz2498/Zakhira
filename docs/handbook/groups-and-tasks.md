@@ -92,22 +92,33 @@ Open a group and tap **+**. A task needs a **title** and a **type**:
   log — running commentary belongs in [Comments](comments.md).
 
 On the desktop you can also set a **priority** — Low, Medium or High — when
-creating the task. The phone's create form has no priority field; a priority
-set on the desktop is shown on the phone.
+creating the task. The phone's create form has no priority field; to give a
+task a priority from the phone, create it and then edit it.
 
 ## Changing a task after it exists
 
-This is the sharpest difference between the two apps.
+Open the task and choose **Edit**. Title, type, priority, due date and notes
+can all be changed, on either app. Tapping the priority that is already set
+clears it back to none.
 
-**On the desktop**, open a task and edit it: title, type, priority, due date
-and notes can all be changed, and the priority can be cleared back to none.
+A task must have a title, so saving with an empty one is refused and the form
+stays open with the rest of your changes intact. **Cancel** abandons the whole
+edit, including the title you were halfway through typing.
 
-**On the phone**, all of those are fixed once the task is created. What you
-*can* do from the phone is everything about its progress — change its state,
-run its timer, and write comments.
+Two things are deliberately not on that form:
 
-If you mistype a task title on the phone, you need the desktop to fix it. The
-alternative is to scrap the task and create it again.
+- **State and the timer.** Both are single controls in the task view itself,
+  and they take effect the moment you touch them. Putting them behind a Save
+  would turn stopping a timer into a two-step act.
+- **The group the task is in.** On the desktop, the group name above the task
+  is a dropdown that moves it. The phone cannot move a task between groups at
+  all; if a task is in the wrong place, that is the one correction it still
+  takes the desktop to make.
+
+**A finished task cannot be edited.** Once a task is Completed or Scrapped,
+neither app offers the Edit button — the task is closed to changes, the same
+rule that locks its comment log. It has to be recovered first, which is
+desktop-only; see [Task states and types](task-states-and-types.md).
 
 ## Finding a task
 
